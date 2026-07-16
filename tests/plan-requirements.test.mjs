@@ -121,14 +121,18 @@ test("returns every public-information section required by the Word sample", asy
   assert.equal(plan.title, "20260718-19 火打-妙高 計画書");
   assert.equal(plan.dates, "2026年07月18日(土) ～ 2026年07月19日(日)");
   assert.equal(plan.area, "妙高・戸隠・雨飾");
-  assert.ok(plan.schedule.every((line) => line === "" || /^\d{2}:\d{2} \S/.test(line)));
-  assert.ok(plan.schedule.includes(""), "日ごとの区切りは空行にする");
+  assert.ok(plan.schedule.every((line) => /^＜\d+日目 \d+\/\d+\([日月火水木金土]\)＞$/.test(line) || /^\d{2}:\d{2} \S/.test(line)));
+  assert.equal(plan.schedule[0], "＜1日目 7/18(土)＞");
+  assert.ok(plan.schedule.includes("＜2日目 7/19(日)＞"));
   assert.ok(plan.schedule.includes("11:00 笹ケ峰登山口"));
   assert.ok(plan.schedule.includes("15:20 黒沢池ヒュッテ"));
   assert.ok(plan.schedule.includes("06:35 妙高山北峰"));
   assert.ok(plan.schedule.includes("12:35 火打山"));
   assert.ok(plan.schedule.includes("16:55 笹ケ峰登山口"));
-  assert.deepEqual(plan.budgetItems, []);
+  assert.equal(plan.budgetItems.length, 6);
+  assert.equal(plan.relatedOrganizations.length, 15);
+  assert.equal(plan.relatedOrganizations[0], "現地連絡先｜｜");
+  assert.equal(plan.relatedOrganizations.at(-1), "病院｜｜");
   assert.ok(
     plan.routeMapUrl === yamarecoUrl || /showmap\.php\?plid=\d+/.test(plan.routeMapUrl),
     "route map falls back to the public plan when Yamareco blocks metadata fetch",
