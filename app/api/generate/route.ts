@@ -125,6 +125,14 @@ function buildPlanTitle(dates: string, publicTitle?: string | null) {
   return `${dateLabel} ${routeName} 計画書`;
 }
 
+function scheduleDayHeading(dates: string, dayIndex: number) {
+  const match = dates.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/);
+  if (!match) return `＜${dayIndex + 1}日目＞`;
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]) + dayIndex));
+  const weekdays = ["日", "月", "火", "水", "木", "金", "土"];
+  return `＜${dayIndex + 1}日目 ${date.getUTCMonth() + 1}/${date.getUTCDate()}(${weekdays[date.getUTCDay()]})＞`;
+}
+
 type ParsedPublicPlan = {
   dates: string;
   area: string;
@@ -174,7 +182,7 @@ function parsePublicPlanHtml(html: string): ParsedPublicPlan {
     for (const point of points) {
       if (/(?:ヒュッテ|山荘|山小屋|小屋|避難小屋|テント場|キャンプ場)$/.test(point.name)) lodgingNames.add(point.name);
     }
-    if (schedule.length) schedule.push("");
+    schedule.push(scheduleDayHeading(dates, blockIndex));
     schedule.push(...major.map((point) => `${point.time} ${point.name}`));
   }
 
@@ -273,8 +281,16 @@ function demoPlan(
     emergencyEvacuation: "",
     commonEquipment: [],
     personalEquipment: [],
-    budgetItems: [],
-    relatedOrganizations: [],
+    budgetItems: [
+      "交通費｜｜鉄道（新宿から往復・学割適用後）",
+      "交通費｜｜バス（駅から登山口まで往復）",
+      "テント場代｜｜", "温泉｜｜", "その他｜｜食費など", "合計｜｜",
+    ],
+    relatedOrganizations: [
+      "現地連絡先｜｜", "顧問｜｜", "大学｜｜",
+      "コーチ｜｜", "コーチ｜｜", "コーチ｜｜", "コーチ｜｜", "コーチ｜｜", "コーチ｜｜",
+      "主将｜｜", "バス｜｜", "タクシー｜｜", "警察｜｜", "山小屋｜｜", "病院｜｜",
+    ],
     conceptMap: "",
     routeMapUrl: routeMapUrl || url,
     timetables: [],
@@ -337,7 +353,7 @@ export async function POST(request: Request) {
     });
   }
 
-  const prompt = `あなたは大学ワンダーフォーゲル部の泊まり山行計画書を作るアシスタントです。次の公開ヤマレコURLを開き、指定どおり整理してください。\n\nURL: ${url}\n取得済みページ名: ${publicTitle || "取得できず"}\n取得済みルート地図URL: ${publicMeta.routeMapUrl || "取得できず"}\n補足メモ: ${notes || "なし"}\n\nヤマレコから転記する項目:\n- 日程、山域、目的、入山地点、下山地点はヤマレコの記載だけを使う。\n- meetingとdismissalは手動記入欄なので必ず空文字にする。\n- scheduleは1地点につき1項目とし、各項目を「時刻 地点」の形式にする。矢印、日付、日目の見出しは付けず、日が変わる位置だけ空文字を1項目入れる。\n- 地点は次の主要地点だけを残す: ①水場またはトイレがある地点、②山頂または小屋。登山口・下山口は各日の始点・終点として残してよい。それ以外の分岐・峠・通過点は省く。\n- schedule内の時刻はすべて5分単位に四捨五入する（例 08:02→08:00、08:03→08:05）。\n- courseTimeMultiplierはヤマレコに表示された倍率を転記する。推測しない。\n- sunsetはヤマレコ記載の日の入り時刻のみ。参照元名やURLは付けない。\n- lodgingはヤマレコ記載のテント場・山小屋を起点にする。\n- routeMapUrlは取得済みルート地図URLを使い、conceptMapは「ヤマレコのルート地図スクリーンショット」とする。\n\nWeb検索で補完する項目:\n- transportとtimetablesは新宿駅から登山口までの往復として、公式の鉄道・バス時刻表で調べる。\n- budgetItemsも新宿駅起点の往復。JRの片道営業キロが101km以上なら普通運賃を2割引きし、10の位で切り捨て、「学割適用」と明記する。特急料金など割引対象外は分けて記載する。\n- lodgingには各テント場・山小屋について、予約要否、料金、水場が有料か無料か、煮沸が必要かを公式情報で記載する。lodgingLinksには宿泊地名をtitle、公式URLをurlとして入れる。\n- relatedOrganizationsは名称・公開連絡先を記載する。\n\n記載しない項目:\n- summaryとrouteとweatherとmeetingとdismissalとemergencyとemergencyEvacuationは空文字。\n- risks、waterSources、foodPlan、commonEquipment、personalEquipmentは空配列。これらはWord上で人が手動記入する。\n\n制約:\n- 個人情報は生成しない。氏名、個人の電話番号・メールアドレスを推測しない。\n- 公式機関、交通事業者、自治体、山小屋など一次情報を優先する。\n- 日付依存情報には対象日または確認日を明記する。\n- budgetItemsは「項目｜金額｜備考」、relatedOrganizationsは「名称｜連絡先｜用途」の形式にする。\n- sourcesには実際に参照したURLと分かりやすいタイトルを入れる。\n- 手動記入が必要な内容に「要確認」「追記してください」などの案内文を入れず、空欄にする。\n- 日本語で簡潔に記載する。`;
+  const prompt = `あなたは大学ワンダーフォーゲル部の泊まり山行計画書を作るアシスタントです。次の公開ヤマレコURLを開き、指定どおり整理してください。\n\nURL: ${url}\n取得済みページ名: ${publicTitle || "取得できず"}\n取得済みルート地図URL: ${publicMeta.routeMapUrl || "取得できず"}\n補足メモ: ${notes || "なし"}\n\nヤマレコから転記する項目:\n- 日程、山域、目的、入山地点、下山地点はヤマレコの記載だけを使う。\n- meetingとdismissalは手動記入欄なので必ず空文字にする。\n- scheduleは各日の先頭に「＜1日目 7/11(土)＞」形式の見出しを1項目入れ、その後は1地点につき1項目を「時刻 地点」の形式にする。矢印は付けない。\n- 地点は次の主要地点だけを残す: ①水場またはトイレがある地点、②山頂または小屋。登山口・下山口は各日の始点・終点として残してよい。それ以外の分岐・峠・通過点は省く。\n- schedule内の時刻はすべて5分単位に四捨五入する（例 08:02→08:00、08:03→08:05）。\n- courseTimeMultiplierはヤマレコに表示された倍率を転記する。推測しない。\n- sunsetはヤマレコ記載の日の入り時刻のみ。参照元名やURLは付けない。\n- lodgingはヤマレコ記載のテント場・山小屋を起点にする。\n- routeMapUrlは取得済みルート地図URLを使い、conceptMapは「ヤマレコのルート全体のスクリーンショット」とする。\n\nWeb検索で補完する項目:\n- transportとtimetablesは新宿駅から登山口までの往復として、公式の鉄道・バス時刻表で調べる。\n- budgetItemsは内蔵Wordと同じ6行（交通費［鉄道］、交通費［バス］、テント場代、温泉、その他、合計）を「項目｜金額｜備考」で返す。JRの片道営業キロが101km以上なら普通運賃を2割引きし、10の位で切り捨て、「学割適用」と明記する。\n- lodgingには各テント場・山小屋について、予約要否、料金、水場が有料か無料か、煮沸が必要かを公式情報で記載する。lodgingLinksには宿泊地名をtitle、公式URLをurlとして入れる。\n- relatedOrganizationsは内蔵Wordと同じ15行を「項目｜名称｜連絡先」で返す。項目と順序は、現地連絡先、顧問、大学、コーチ6行、主将、バス、タクシー、警察、山小屋、病院。個人情報が必要な現地連絡先・顧問・コーチ・主将は名称と連絡先を空欄にする。\n\n記載しない項目:\n- summaryとrouteとweatherとmeetingとdismissalとemergencyとemergencyEvacuationは空文字。\n- risks、waterSources、foodPlan、commonEquipment、personalEquipmentは空配列。これらはWord上で人が手動記入する。\n\n制約:\n- 個人情報は生成しない。氏名、個人の電話番号・メールアドレスを推測しない。\n- 公式機関、交通事業者、自治体、山小屋など一次情報を優先する。\n- 日付依存情報には対象日または確認日を明記する。\n- sourcesには実際に参照したURLと分かりやすいタイトルを入れる。\n- 手動記入が必要な内容に「要確認」「追記してください」などの案内文を入れず、空欄にする。\n- 日本語で簡潔に記載する。`;
 
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
