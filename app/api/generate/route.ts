@@ -7,7 +7,7 @@ const PLAN_SCHEMA = {
   type: "object",
   additionalProperties: false,
   required: [
-    "title", "dates", "area", "purpose", "meeting", "dismissal", "entryPoint", "exitPoint",
+    "title", "dates", "area", "purpose", "meeting", "dismissal", "entryPoint", "entryTime", "exitPoint", "exitTime",
     "summary", "route", "schedule", "courseTimeMultiplier", "sunset", "weather", "risks",
     "transport", "lodging", "lodgingLinks", "waterSources", "foodPlan", "emergency", "emergencyEvacuation",
     "commonEquipment", "personalEquipment", "budgetItems", "relatedOrganizations",
@@ -21,7 +21,9 @@ const PLAN_SCHEMA = {
     meeting: { type: "string" },
     dismissal: { type: "string" },
     entryPoint: { type: "string" },
+    entryTime: { type: "string" },
     exitPoint: { type: "string" },
+    exitTime: { type: "string" },
     summary: { type: "string" },
     route: { type: "string" },
     schedule: { type: "array", items: { type: "string" } },
@@ -118,6 +120,9 @@ function buildPlanTitle(dates: string, publicTitle?: string | null) {
       : ""}`
     : "日程未定";
   const sourceName = (publicTitle || "山行")
+    .replace(/\s*\[[^\]]*(?:登山|山行)[^\]]*\]\s*[-‐‑‒–—―]?\s*ヤマレコ\s*$/u, "")
+    .replace(/[-‐‑‒–—―]\s*\d{4}年\d{1,2}月\d{1,2}日.*$/u, "")
+    .replace(/\s*[-‐‑‒–—―]\s*ヤマレコ\s*$/u, "")
     .replace(/\s*登山計画書\s*$/u, "")
     .replace(/\s+/g, "")
     .replace(/[‐‑‒–—―ー]/g, "-");
@@ -139,7 +144,9 @@ type ParsedPublicPlan = {
   schedule: string[];
   courseTimeMultiplier: string;
   entryPoint: string;
+  entryTime: string;
   exitPoint: string;
+  exitTime: string;
   lodging: string;
   firstPointId: string;
 };
@@ -153,15 +160,15 @@ function parsePublicPlanHtml(html: string): ParsedPublicPlan {
   const courseTimeMultiplier = stripHtml(html.match(/<div class="pace-num">[\s\S]*?<span[^>]*>([^<]+)<\/span>/i)?.[1] ?? "");
   const blockMatches = [...html.matchAll(/<div class="record-detail-content-time-block">/g)];
   const schedule: string[] = [];
-  const allPoints: Array<{ name: string; pointId: string }> = [];
+  const allPoints: Array<{ time: string; name: string; pointId: string }> = [];
   const lodgingNames = new Set<string>();
 
   for (let blockIndex = 0; blockIndex < blockMatches.length; blockIndex += 1) {
     const start = blockMatches[blockIndex].index ?? 0;
     const end = blockMatches[blockIndex + 1]?.index ?? html.indexOf("</section>", start);
     const block = html.slice(start, end > start ? end : undefined);
-    const itemMatches = [...block.matchAll(/<div class="item(?:\s+[^"']*)?">/g)];
-    const points: Array<{ time: string; name: string; pointId: string }> = [];
+    const itemMatches = [...block.matchAll(/<div[^>]*class=["'][^"']*\bitem\b[^"']*["'][^>]*>/gi)];
+    const points: Array<{ time: string; name: string; pointId: string; hasWater: boolean; hasToilet: boolean }> = [];
     for (let itemIndex = 0; itemIndex < itemMatches.length; itemIndex += 1) {
       const itemStart = itemMatches[itemIndex].index ?? 0;
       const itemEnd = itemMatches[itemIndex + 1]?.index ?? block.length;
@@ -170,12 +177,15 @@ function parsePublicPlanHtml(html: string): ParsedPublicPlan {
       const nameHtml = item.match(/<div class="name">([\s\S]*?)<\/div>/i)?.[1] ?? "";
       const name = stripHtml(nameHtml);
       const pointId = nameHtml.match(/ptid=(\d+)/i)?.[1] ?? "";
-      if (time && name) points.push({ time: roundTimesToFiveMinutes(time), name, pointId });
+      const hasWater = /水場|給水|water|mizuba|fa-tint|icon-water/i.test(item);
+      const hasToilet = /トイレ|便所|toilet|icon-toilet|(?:^|["'\s_-])wc(?:["'\s_-]|$)/i.test(item);
+      if (time && name) points.push({ time: roundTimesToFiveMinutes(time), name, pointId, hasWater, hasToilet });
     }
     if (!points.length) continue;
-    allPoints.push(...points.map(({ name, pointId }) => ({ name, pointId })));
+    allPoints.push(...points.map(({ time, name, pointId }) => ({ time, name, pointId })));
     const major = points.filter((point, index) => {
       if (index === 0 || index === points.length - 1) return true;
+      if (point.hasWater || point.hasToilet) return true;
       if (/(?:ヒュッテ|山荘|山小屋|小屋|避難小屋|テント場|キャンプ場)$/.test(point.name)) return true;
       return /(?:山(?:北峰|南峰)?|岳|峰|山頂)$/.test(point.name);
     });
@@ -183,7 +193,7 @@ function parsePublicPlanHtml(html: string): ParsedPublicPlan {
       if (/(?:ヒュッテ|山荘|山小屋|小屋|避難小屋|テント場|キャンプ場)$/.test(point.name)) lodgingNames.add(point.name);
     }
     schedule.push(scheduleDayHeading(dates, blockIndex));
-    schedule.push(...major.map((point) => `${point.time} ${point.name}`));
+    schedule.push(...major.map((point) => `${point.time} ${point.name}${point.hasWater ? " 💧" : ""}${point.hasToilet ? " 🚻" : ""}`));
   }
 
   return {
@@ -192,7 +202,9 @@ function parsePublicPlanHtml(html: string): ParsedPublicPlan {
     schedule,
     courseTimeMultiplier,
     entryPoint: allPoints[0]?.name ?? "",
+    entryTime: allPoints[0]?.time ?? "",
     exitPoint: allPoints.at(-1)?.name ?? "",
+    exitTime: allPoints.at(-1)?.time ?? "",
     lodging: [...lodgingNames].join("、"),
     firstPointId: allPoints.find((point) => point.pointId)?.pointId ?? "",
   };
@@ -264,7 +276,9 @@ function demoPlan(
     meeting: "",
     dismissal: "",
     entryPoint: parsed?.entryPoint || "",
+    entryTime: parsed?.entryTime || "",
     exitPoint: parsed?.exitPoint || "",
+    exitTime: parsed?.exitTime || "",
     summary: "",
     route: "",
     schedule: parsed?.schedule.length ? parsed.schedule : [],
@@ -353,7 +367,7 @@ export async function POST(request: Request) {
     });
   }
 
-  const prompt = `あなたは大学ワンダーフォーゲル部の泊まり山行計画書を作るアシスタントです。次の公開ヤマレコURLを開き、指定どおり整理してください。\n\nURL: ${url}\n取得済みページ名: ${publicTitle || "取得できず"}\n取得済みルート地図URL: ${publicMeta.routeMapUrl || "取得できず"}\n補足メモ: ${notes || "なし"}\n\nヤマレコから転記する項目:\n- 日程、山域、目的、入山地点、下山地点はヤマレコの記載だけを使う。\n- meetingとdismissalは手動記入欄なので必ず空文字にする。\n- scheduleは各日の先頭に「＜1日目 7/11(土)＞」形式の見出しを1項目入れ、その後は1地点につき1項目を「時刻 地点」の形式にする。矢印は付けない。\n- 地点は次の主要地点だけを残す: ①水場またはトイレがある地点、②山頂または小屋。登山口・下山口は各日の始点・終点として残してよい。それ以外の分岐・峠・通過点は省く。\n- schedule内の時刻はすべて5分単位に四捨五入する（例 08:02→08:00、08:03→08:05）。\n- courseTimeMultiplierはヤマレコに表示された倍率を転記する。推測しない。\n- sunsetはヤマレコ記載の日の入り時刻のみ。参照元名やURLは付けない。\n- lodgingはヤマレコ記載のテント場・山小屋を起点にする。\n- routeMapUrlは取得済みルート地図URLを使い、conceptMapは「ヤマレコのルート全体のスクリーンショット」とする。\n\nWeb検索で補完する項目:\n- transportとtimetablesは新宿駅から登山口までの往復として、公式の鉄道・バス時刻表で調べる。\n- budgetItemsは内蔵Wordと同じ6行（交通費［鉄道］、交通費［バス］、テント場代、温泉、その他、合計）を「項目｜金額｜備考」で返す。JRの片道営業キロが101km以上なら普通運賃を2割引きし、10の位で切り捨て、「学割適用」と明記する。\n- lodgingには各テント場・山小屋について、予約要否、料金、水場が有料か無料か、煮沸が必要かを公式情報で記載する。lodgingLinksには宿泊地名をtitle、公式URLをurlとして入れる。\n- relatedOrganizationsは内蔵Wordと同じ15行を「項目｜名称｜連絡先」で返す。項目と順序は、現地連絡先、顧問、大学、コーチ6行、主将、バス、タクシー、警察、山小屋、病院。個人情報が必要な現地連絡先・顧問・コーチ・主将は名称と連絡先を空欄にする。\n\n記載しない項目:\n- summaryとrouteとweatherとmeetingとdismissalとemergencyとemergencyEvacuationは空文字。\n- risks、waterSources、foodPlan、commonEquipment、personalEquipmentは空配列。これらはWord上で人が手動記入する。\n\n制約:\n- 個人情報は生成しない。氏名、個人の電話番号・メールアドレスを推測しない。\n- 公式機関、交通事業者、自治体、山小屋など一次情報を優先する。\n- 日付依存情報には対象日または確認日を明記する。\n- sourcesには実際に参照したURLと分かりやすいタイトルを入れる。\n- 手動記入が必要な内容に「要確認」「追記してください」などの案内文を入れず、空欄にする。\n- 日本語で簡潔に記載する。`;
+  const prompt = `あなたは大学ワンダーフォーゲル部の泊まり山行計画書を作るアシスタントです。次の公開ヤマレコURLを開き、指定どおり整理してください。\n\nURL: ${url}\n取得済みページ名: ${publicTitle || "取得できず"}\n取得済みルート地図URL: ${publicMeta.routeMapUrl || "取得できず"}\n取得済み日の入り: ${publicMeta.sunset || "取得できず（Web検索で補完すること）"}\n補足メモ: ${notes || "なし"}\n\nヤマレコから転記する項目:\n- 日程、山域、目的、入山地点、入山時刻、下山地点、下山時刻はヤマレコの記載だけを使う。\n- meetingとdismissalは手動記入欄なので必ず空文字にする。\n- scheduleは各日の先頭に「＜1日目 7/11(土)＞」形式の見出しを1項目入れ、その後は1地点につき1項目を「時刻 地点」の形式にする。矢印は付けない。\n- 地点は次の主要地点だけを残す: ①水場またはトイレがある地点、②山頂または小屋。登山口・下山口は各日の始点・終点として残してよい。それ以外の分岐・峠・通過点は省く。\n- 各地点に水場があれば末尾に「💧」、トイレがあれば末尾に「🚻」を付ける。両方あれば「💧 🚻」の順に付ける。\n- schedule、entryTime、exitTimeの時刻はすべて5分単位に四捨五入する。\n- courseTimeMultiplierはヤマレコに表示された倍率を転記する。推測しない。\n- sunsetはヤマレコから取得済みならその値を使う。取得できていなければ、対象日と山域に対応する日の入り時刻を信頼できるWeb情報から検索して補完する。sunsetには時刻だけを記載し、参照元名やURLは付けない。\n- lodgingはヤマレコ記載のテント場・山小屋を起点にする。\n- routeMapUrlは取得済みルート地図URLを使い、conceptMapは「ヤマレコのルート全体のスクリーンショット」とする。\n\nWeb検索で補完する項目:\n- transportは新宿駅から登山口までの往復として、公式情報で調べる。\n- timetablesは実際に利用するバスだけを対象にする。鉄道の時刻表は入れない。往路で使うバスは「往路｜路線・区間｜公式時刻表URL」、復路で使うバスは「復路｜路線・区間｜公式時刻表URL」とし、利用しない方向は入れない。\n- budgetItemsは内蔵Wordと同じ6行（交通費［鉄道］、交通費［バス］、テント場代、温泉、その他、合計）を「項目｜金額｜備考」で返す。JRの片道営業キロが101km以上なら普通運賃を2割引きし、10の位で切り捨て、「学割適用」と明記する。\n- lodgingには各テント場・山小屋について、予約要否、料金、水場が有料か無料か、煮沸が必要かを公式情報で記載する。lodgingLinksには宿泊地名をtitle、必ず公式URLをurlとして入れる。\n- relatedOrganizationsは内蔵Wordと同じ15行を「項目｜名称｜連絡先」で返す。項目と順序は、現地連絡先、顧問、大学、コーチ6行、主将、バス、タクシー、警察、山小屋、病院。個人情報が必要な現地連絡先・顧問・コーチ・主将は名称と連絡先を空欄にする。\n\n記載しない項目:\n- summaryとrouteとweatherとmeetingとdismissalとemergencyとemergencyEvacuationは空文字。\n- risks、waterSources、foodPlan、commonEquipment、personalEquipmentは空配列。これらはWord上で人が手動記入する。\n\n制約:\n- 個人情報は生成しない。氏名、個人の電話番号・メールアドレスを推測しない。\n- 公式機関、交通事業者、自治体、山小屋など一次情報を優先する。\n- 日付依存情報には対象日または確認日を明記する。\n- sourcesには実際に参照したURLと分かりやすいタイトルを入れる。\n- 手動記入が必要な内容に「要確認」「追記してください」などの案内文を入れず、空欄にする。\n- 日本語で簡潔に記載する。`;
 
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
@@ -384,11 +398,15 @@ export async function POST(request: Request) {
   const plan = JSON.parse(textBlock.text) as ReturnType<typeof demoPlan>;
   plan.routeMapUrl = publicMeta.routeMapUrl || plan.routeMapUrl;
   plan.schedule = plan.schedule.map(roundTimesToFiveMinutes);
+  plan.entryTime = roundTimesToFiveMinutes(plan.entryTime);
+  plan.exitTime = roundTimesToFiveMinutes(plan.exitTime);
   if (publicMeta.parsed) {
     plan.dates = publicMeta.parsed.dates || plan.dates;
     plan.area = publicMeta.parsed.area || plan.area;
     plan.entryPoint = publicMeta.parsed.entryPoint || plan.entryPoint;
+    plan.entryTime = publicMeta.parsed.entryTime || plan.entryTime;
     plan.exitPoint = publicMeta.parsed.exitPoint || plan.exitPoint;
+    plan.exitTime = publicMeta.parsed.exitTime || plan.exitTime;
     plan.courseTimeMultiplier = publicMeta.parsed.courseTimeMultiplier || plan.courseTimeMultiplier;
     plan.schedule = publicMeta.parsed.schedule.length ? publicMeta.parsed.schedule : plan.schedule;
   }
