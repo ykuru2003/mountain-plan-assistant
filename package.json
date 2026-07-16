@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@xmldom/xmldom": "^0.9.10",
+    "docx-preview": "^0.3.7",
     "drizzle-orm": "0.45.2",
     "iconv-lite": "^0.6.3",
     "lucide-react": "^0.468.0",

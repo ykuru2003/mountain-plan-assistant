@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "登山計画書 Field Desk",
-  description: "ヤマレコと公開情報を指定Wordへまとめる登山計画書ビルダー。",
+  description: "ヤマレコと公開情報を内蔵Word書式へまとめる登山計画書ビルダー。",
   other: {
     "codex-preview": "development",
   },

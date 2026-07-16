@@ -16,14 +16,13 @@ import {
   LoaderCircle,
   MapPinned,
   Mountain,
-  Save,
   Search,
   ShieldCheck,
   Route,
   Upload,
   X,
 } from "lucide-react";
-import { type ClipboardEvent, useEffect, useMemo, useState } from "react";
+import { type ClipboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { fillWordTemplate, type WordImage } from "@/lib/word-template";
 
 type Source = { title: string; url: string };
@@ -129,11 +128,6 @@ function isYamarecoUrl(value: string) {
   }
 }
 
-function planToMarkdown(plan: Plan) {
-  const bullets = (items: string[]) => items.map((item) => `- ${item}`).join("\n");
-  return `# ${plan.title}\n\n## 基本情報\n- 日程：${plan.dates}\n- 山域：${plan.area}\n- 山行目的：${plan.purpose}\n- 集合：${plan.meeting}\n- 解散：${plan.dismissal}\n- 入山地点：${plan.entryPoint}\n- 下山地点：${plan.exitPoint}\n\n## 日別ルート\n${bullets(plan.schedule)}\n\n- コースタイム倍率：${plan.courseTimeMultiplier}\n- 日の入り：${plan.sunset}\n\n## 交通機関（新宿起点）\n${plan.transport}\n\n## テント場・山小屋\n${plan.lodging}\n${plan.lodgingLinks.map((source) => `- [${source.title}](${source.url})`).join("\n")}\n\n## 予算（新宿起点）\n${bullets(plan.budgetItems)}\n\n## 関係諸機関（公開情報）\n${bullets(plan.relatedOrganizations)}\n\n## 概念図\n- [ヤマレコのルート地図](${plan.routeMapUrl})\n\n## 時刻表\n${bullets(plan.timetables)}\n\n## Wordで人が手動記入する項目\n- 水場情報・食糧計画・緊急時対策\n- 共同装備・個人装備\n- 執筆者・メンバー・連絡網\n\n## 参照元\n${plan.sources.map((source) => `- [${source.title}](${source.url})`).join("\n")}\n`;
-}
-
 export default function Home() {
   const [url, setUrl] = useState("");
   const [urlChecked, setUrlChecked] = useState(false);
@@ -144,24 +138,6 @@ export default function Home() {
   const [notice, setNotice] = useState("");
 
   const validUrl = useMemo(() => isYamarecoUrl(url), [url]);
-
-  useEffect(() => {
-    const saved = window.localStorage.getItem("mountain-plan-draft");
-    if (!saved) return;
-    try {
-      const draft = JSON.parse(saved) as { url?: string; plan?: Plan };
-      const restore = window.setTimeout(() => {
-        setUrl(draft.url ?? "");
-        if (draft.plan?.title) {
-          setPlan(normalizePlan(draft.plan));
-          setStatus("review");
-        }
-      }, 0);
-      return () => window.clearTimeout(restore);
-    } catch {
-      window.localStorage.removeItem("mountain-plan-draft");
-    }
-  }, []);
 
   useEffect(() => {
     if (status !== "generating") return;
@@ -201,7 +177,6 @@ export default function Home() {
       setPlan(normalized);
       setNotice(data.warning ?? (data.demoMode ? "Web検索は未設定です。ヤマレコから取得した内容を確認してください。" : ""));
       setStatus("review");
-      window.localStorage.setItem("mountain-plan-draft", JSON.stringify({ url, plan: normalized }));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "計画書案を作成できませんでした。");
       setStatus("input");
@@ -212,20 +187,6 @@ export default function Home() {
     setPlan((current) => ({ ...current, [key]: value }));
   }
 
-  function saveDraft() {
-    window.localStorage.setItem("mountain-plan-draft", JSON.stringify({ url, plan }));
-    setNotice("この端末に下書きを保存しました。");
-  }
-
-  function downloadMarkdown() {
-    const blob = new Blob([planToMarkdown(plan)], { type: "text/markdown;charset=utf-8" });
-    const anchor = document.createElement("a");
-    anchor.href = URL.createObjectURL(blob);
-    anchor.download = `${plan.title || "登山計画書"}.md`;
-    anchor.click();
-    URL.revokeObjectURL(anchor.href);
-  }
-
   const activeStep = status === "review" ? 3 : status === "generating" ? 2 : 1;
 
   return (
@@ -233,11 +194,11 @@ export default function Home() {
       <header className="topbar">
         <a className="brand" href="#top" aria-label="登山計画書 Field Desk トップ">
           <span className="brand-mark"><Mountain size={28} strokeWidth={2.4} /></span>
-          <span className="brand-copy"><strong>登山計画書</strong><small>FIELD DESK</small></span>
+          <span className="brand-copy"><strong>登山計画書</strong><small>ALPINE DOCUMENTS</small></span>
         </a>
         <nav className="header-actions" aria-label="補助メニュー">
           <a href="#guide"><HelpCircle size={19} />使い方</a>
-          <span className="public-chip"><ShieldCheck size={19} />PUBLIC DATA / LOCAL DOCX</span>
+          <span className="public-chip"><ShieldCheck size={19} />WORD FORMAT INCLUDED</span>
         </nav>
       </header>
 
@@ -265,8 +226,6 @@ export default function Home() {
             plan={plan}
             notice={notice}
             onBack={() => setStatus("input")}
-            onSave={saveDraft}
-            onDownload={downloadMarkdown}
             onUpdate={updatePlan}
           />
         ) : (
@@ -308,7 +267,7 @@ export default function Home() {
 
         <section className="guide" id="guide">
           <Search size={22} />
-          <div><strong>指定Wordへ安全に追記</strong><p>公開情報を確認・修正し、地図と時刻表のスクリーンショットを貼り付けたあと、指定のWordへ出力できます。水場情報、食糧、緊急時対策、装備、個人情報の欄は変更しません。</p></div>
+          <div><strong>標準書式を内蔵</strong><p>見本のWord書式はアプリに組み込み済みです。公開情報を確認し、地図と時刻表の画像を添えて、そのまま計画書として出力できます。</p></div>
         </section>
       </div>
     </main>
@@ -319,21 +278,17 @@ function ReviewView({
   plan,
   notice,
   onBack,
-  onSave,
-  onDownload,
   onUpdate,
 }: {
   plan: Plan;
   notice: string;
   onBack: () => void;
-  onSave: () => void;
-  onDownload: () => void;
   onUpdate: <K extends keyof Plan>(key: K, value: Plan[K]) => void;
 }) {
-  const [templateFile, setTemplateFile] = useState<File | null>(null);
   const [wordError, setWordError] = useState("");
   const [wordBusy, setWordBusy] = useState(false);
-  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [previewDocument, setPreviewDocument] = useState<Uint8Array | null>(null);
   const [routeMapImage, setRouteMapImage] = useState<File | null>(null);
   const [timetableImages, setTimetableImages] = useState<File[]>([]);
   const listValue = (value: string[]) => value.join("\n");
@@ -346,23 +301,37 @@ function ReviewView({
   const completed = requiredValues.filter((value) => Array.isArray(value) ? value.length > 0 : value.trim().length > 0).length;
   const completion = Math.round((completed / requiredValues.length) * 100);
 
-  async function downloadWord() {
-    if (!templateFile) {
-      setWordError("先に、送っていただいた形式のWordテンプレートを選択してください。");
-      return;
+  async function buildWordDocument() {
+    const toWordImage = async (file: File): Promise<WordImage> => ({
+      bytes: new Uint8Array(await file.arrayBuffer()),
+      extension: file.type === "image/png" ? "png" : "jpg",
+      contentType: file.type === "image/png" ? "image/png" : "image/jpeg",
+    });
+    const templateResponse = await fetch("/templates/mountain-plan-template.docx", { cache: "force-cache" });
+    if (!templateResponse.ok) throw new Error("内蔵のWord書式を読み込めませんでした。");
+    return fillWordTemplate(await templateResponse.arrayBuffer(), plan, {
+      routeMap: routeMapImage ? await toWordImage(routeMapImage) : undefined,
+      timetables: await Promise.all(timetableImages.map(toWordImage)),
+    });
+  }
+
+  async function previewWord() {
+    setPreviewBusy(true);
+    setWordError("");
+    try {
+      setPreviewDocument(await buildWordDocument());
+    } catch (reason) {
+      setWordError(reason instanceof Error ? reason.message : "Wordプレビューを作成できませんでした。");
+    } finally {
+      setPreviewBusy(false);
     }
+  }
+
+  async function downloadWord() {
     setWordBusy(true);
     setWordError("");
     try {
-      const toWordImage = async (file: File): Promise<WordImage> => ({
-        bytes: new Uint8Array(await file.arrayBuffer()),
-        extension: file.type === "image/png" ? "png" : "jpg",
-        contentType: file.type === "image/png" ? "image/png" : "image/jpeg",
-      });
-      const output = fillWordTemplate(await templateFile.arrayBuffer(), plan, {
-        routeMap: routeMapImage ? await toWordImage(routeMapImage) : undefined,
-        timetables: await Promise.all(timetableImages.map(toWordImage)),
-      });
+      const output = await buildWordDocument();
       const blob = new Blob([new Uint8Array(output).buffer], {
         type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
       });
@@ -382,14 +351,11 @@ function ReviewView({
     <section className="review-layout">
       <div className="review-toolbar">
         <button className="text-button" onClick={onBack} type="button"><ArrowLeft size={18} />入力へ戻る</button>
-        <div>
-          <button className="outline-button" onClick={onSave} type="button"><Save size={18} />下書き保存</button>
-          <button className="primary-small" onClick={onDownload} type="button"><Download size={18} />Markdown保存</button>
-        </div>
+        <span className="toolbar-note"><FileText size={17} />標準Word書式を使用</span>
       </div>
       {notice ? <div className="notice">{notice}</div> : null}
       <article className="plan-editor">
-        <div className="editor-heading"><span>PLAN WORKSHEET</span><small>指定Wordテンプレート対応</small></div>
+        <div className="editor-heading"><span>PLAN WORKSHEET</span><small>標準Word書式へ直接出力</small></div>
         <div className="completion-card">
           <div><ClipboardCheck size={22} /><span><strong>必須項目の充足度 {completion}%</strong><small>{completed} / {requiredValues.length}項目</small></span></div>
           <progress max="100" value={completion}>{completion}%</progress>
@@ -460,27 +426,15 @@ function ReviewView({
         <div className="word-card">
           <div className="word-card-heading">
             <FileText size={22} />
-            <div><strong>Wordテンプレートへ追記</strong><p>処理はこのブラウザ内で完結します</p></div>
+            <div><strong>Word計画書を作成</strong><p>見本の5ページ書式をアプリに内蔵</p></div>
           </div>
-          <label className="template-picker">
-            <Upload size={17} />
-            <span>{templateFile ? templateFile.name : "テンプレートを選択"}</span>
-            <input
-              accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-              onChange={(event) => {
-                const file = event.target.files?.[0] ?? null;
-                setTemplateFile(file);
-                setWordError("");
-              }}
-              type="file"
-            />
-          </label>
+          <div className="template-status"><CheckCircle2 size={18} /><span><strong>標準書式</strong><small>準備済み・選択操作は不要</small></span></div>
           <div className="word-actions">
-            <button className="outline-button" onClick={() => setPreviewOpen(true)} type="button"><Eye size={17} />プレビュー</button>
+            <button className="outline-button" disabled={previewBusy} onClick={previewWord} type="button"><Eye size={17} />{previewBusy ? "作成中" : "Wordプレビュー"}</button>
             <button className="primary-small" disabled={wordBusy} onClick={downloadWord} type="button"><Download size={17} />{wordBusy ? "作成中" : "Word作成"}</button>
           </div>
           {wordError ? <p className="word-error" role="alert">{wordError}</p> : null}
-          <p className="word-privacy"><LockKeyhole size={14} />テンプレート、氏名、連絡先はサーバーへ送信しません。</p>
+          <p className="word-privacy"><LockKeyhole size={14} />画像の合成とWord生成は、このブラウザ内で完結します。</p>
         </div>
         <div className="manual-card">
           <LockKeyhole size={20} />
@@ -496,7 +450,7 @@ function ReviewView({
           ))}
         </div>
       </aside>
-      {previewOpen ? <WordPreview plan={plan} routeMapImage={routeMapImage} timetableImages={timetableImages} onClose={() => setPreviewOpen(false)} /> : null}
+      {previewDocument ? <WordPreview document={previewDocument} onClose={() => setPreviewDocument(null)} /> : null}
     </section>
   );
 }
@@ -554,50 +508,47 @@ function FileImagePreview({ file, alt }: { file: File; alt: string }) {
 }
 
 function WordPreview({
-  plan,
-  routeMapImage,
-  timetableImages,
+  document,
   onClose,
 }: {
-  plan: Plan;
-  routeMapImage: File | null;
-  timetableImages: File[];
+  document: Uint8Array;
   onClose: () => void;
 }) {
+  const container = useRef<HTMLDivElement>(null);
+  const [renderError, setRenderError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    async function renderDocument() {
+      if (!container.current) return;
+      container.current.replaceChildren();
+      try {
+        const { renderAsync } = await import("docx-preview");
+        await renderAsync(document, container.current, undefined, {
+          breakPages: true,
+          ignoreHeight: false,
+          ignoreWidth: false,
+          inWrapper: true,
+          useBase64URL: true,
+        });
+      } catch (reason) {
+        if (!cancelled) setRenderError(reason instanceof Error ? reason.message : "Wordを表示できませんでした。");
+      }
+    }
+    void renderDocument();
+    return () => { cancelled = true; };
+  }, [document]);
+
   return (
     <div className="preview-overlay" role="dialog" aria-modal="true" aria-label="Word出力プレビュー">
       <div className="preview-window">
         <div className="preview-window-toolbar">
-          <div><strong>Word出力プレビュー</strong><span>実際の書式は選択したテンプレートを保持します</span></div>
+          <div><strong>Word出力プレビュー</strong><span>アプリ内蔵の標準書式で出力します</span></div>
           <button aria-label="プレビューを閉じる" onClick={onClose} type="button"><X size={22} /></button>
         </div>
         <div className="preview-scroll">
-          <article className="word-page">
-            <h1>{plan.title || "泊まり山行計画書"}</h1>
-            <table><tbody>
-              <tr><th>日程</th><td>{plan.dates}</td><th>山域</th><td>{plan.area}</td></tr>
-              <tr><th>山行目的</th><td colSpan={3}>{plan.purpose}</td></tr>
-              <tr><th>集合</th><td>{plan.meeting}</td><th>解散</th><td>{plan.dismissal}</td></tr>
-              <tr><th>入山地点</th><td>{plan.entryPoint}</td><th>下山地点</th><td>{plan.exitPoint}</td></tr>
-              <tr><th>行動予定</th><td colSpan={3}>{plan.schedule.map((item) => <p key={item}>{item}</p>)}</td></tr>
-              <tr><th>備考</th><td colSpan={3}>
-                <p>コースタイム倍率：{plan.courseTimeMultiplier}</p><p>日没：{plan.sunset}</p>
-                <p>交通：{plan.transport}</p><p>宿泊：{plan.lodging}</p>
-                {plan.lodgingLinks.map((item) => <p key={item.url}>宿泊地URL：<a href={item.url} rel="noreferrer" target="_blank">{item.title}</a></p>)}
-              </td></tr>
-            </tbody></table>
-          </article>
-          <article className="word-page">
-            <h2>安全・予算・関係諸機関</h2>
-            <table><tbody>
-              <tr><th>予算</th><td>{plan.budgetItems.map((item) => <p key={item}>{item}</p>)}</td></tr>
-              <tr><th>関係諸機関</th><td>{plan.relatedOrganizations.map((item) => <p key={item}>{item}</p>)}</td></tr>
-            </tbody></table>
-            <h2>概念図</h2>
-            {routeMapImage ? <div className="preview-pasted-image"><FileImagePreview file={routeMapImage} alt="ルート概念図" /></div> : plan.routeMapUrl ? <div className="preview-map"><iframe src={plan.routeMapUrl} title="ルート概念図プレビュー" /><a href={plan.routeMapUrl} rel="noreferrer" target="_blank">ヤマレコで開く<ExternalLink size={14} /></a></div> : <p>ルート地図のスクリーンショットがありません。</p>}
-            <h2>時刻表など</h2>
-            {timetableImages.length ? timetableImages.map((file, index) => <div className="preview-pasted-image" key={`${file.name}-${index}`}><FileImagePreview file={file} alt={`時刻表 ${index + 1}`} /></div>) : <p>時刻表のスクリーンショットがありません。</p>}
-          </article>
+          {renderError ? <div className="word-render-error" role="alert">{renderError}</div> : null}
+          <div className="docx-renderer" ref={container} />
         </div>
       </div>
     </div>
