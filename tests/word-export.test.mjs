@@ -14,7 +14,7 @@ test("uses the built-in Word format and exposes preview/export controls", async 
   assert.doesNotMatch(page, /下書き保存|Markdown保存|templateFile|mountain-plan-draft/);
   assert.match(page, /fetch\("\/templates\/mountain-plan-template\.docx"/);
   assert.match(page, /fillWordTemplate\(await templateResponse\.arrayBuffer\(\), plan,/);
-  assert.match(page, /renderAsync\(document, container\.current/);
+  assert.match(page, /renderAsync\(wordDocument, container\.current/);
   assert.match(exporter, /宿泊地URL/);
   assert.match(exporter, /ヤマレコのルート地図を開く/);
   assert.match(exporter, /appendImagesAfterBodyParagraph/);
