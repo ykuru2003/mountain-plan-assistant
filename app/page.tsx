@@ -105,6 +105,41 @@ const ARRAY_FIELDS: Array<keyof Plan> = [
   "personalEquipment", "budgetItems", "relatedOrganizations", "timetables", "lodgingLinks", "sources",
 ];
 
+const BUDGET_DEFAULTS = [
+  "交通費｜｜鉄道（新宿から往復・学割適用後）",
+  "交通費｜｜バス（駅から登山口まで往復）",
+  "テント場代｜｜",
+  "温泉｜｜",
+  "その他｜｜食費など",
+  "合計｜｜",
+];
+
+const AGENCY_TYPES = [
+  "現地連絡先", "顧問", "大学",
+  "コーチ", "コーチ", "コーチ", "コーチ", "コーチ", "コーチ",
+  "主将", "バス", "タクシー", "警察", "山小屋", "病院",
+];
+
+function normalizeAgencyRows(values: string[]) {
+  const rows = AGENCY_TYPES.map((type) => `${type}｜｜`);
+  const used = new Set<number>();
+  for (const value of values) {
+    const [rawType = "", rawName = "", rawContact = ""] = value.split(/[｜|]/).map((part) => part.trim());
+    const exact = AGENCY_TYPES.includes(rawType);
+    const inferred = exact ? rawType
+      : /警察/.test(value) ? "警察"
+        : /病院|医療/.test(value) ? "病院"
+          : /山小屋|ヒュッテ|山荘/.test(value) ? "山小屋"
+            : /タクシー/.test(value) ? "タクシー"
+              : /バス/.test(value) ? "バス" : "";
+    const index = AGENCY_TYPES.findIndex((type, itemIndex) => type === inferred && !used.has(itemIndex));
+    if (index < 0) continue;
+    used.add(index);
+    rows[index] = exact ? `${rawType}｜${rawName}｜${rawContact}` : `${inferred}｜${rawType}｜${rawName}`;
+  }
+  return rows;
+}
+
 function normalizePlan(value: (Partial<Plan> & { access?: string; equipment?: string[] }) | null | undefined): Plan {
   const legacy = value ?? {};
   const merged = { ...EMPTY_PLAN, ...legacy } as Plan;
@@ -115,6 +150,9 @@ function normalizePlan(value: (Partial<Plan> & { access?: string; equipment?: st
   for (const key of ARRAY_FIELDS) {
     if (!Array.isArray(merged[key])) (merged as Record<string, unknown>)[key] = [];
   }
+  merged.budgetItems = merged.budgetItems.length ? merged.budgetItems.slice(0, 6) : BUDGET_DEFAULTS;
+  while (merged.budgetItems.length < 6) merged.budgetItems.push(BUDGET_DEFAULTS[merged.budgetItems.length]);
+  merged.relatedOrganizations = normalizeAgencyRows(merged.relatedOrganizations);
   return merged;
 }
 
@@ -132,7 +170,6 @@ function isYamarecoUrl(value: string) {
 
 export default function Home() {
   const [url, setUrl] = useState("");
-  const [urlChecked, setUrlChecked] = useState(false);
   const [status, setStatus] = useState<"input" | "generating" | "review">("input");
   const [stage, setStage] = useState(0);
   const [plan, setPlan] = useState<Plan>(EMPTY_PLAN);
@@ -151,13 +188,7 @@ export default function Home() {
     };
   }, [status]);
 
-  function checkUrl() {
-    setUrlChecked(true);
-    setError(validUrl ? "" : "https://www.yamareco.com/ から始まる公開URLを入力してください。");
-  }
-
   async function generatePlan() {
-    setUrlChecked(true);
     if (!validUrl) {
       setError("ヤマレコの公開URLを確認してください。");
       return;
@@ -234,8 +265,8 @@ export default function Home() {
           <section className="workspace">
             <article className="card input-card">
               <div className="eyebrow"><MapPinned size={18} />YAMARECO TO WORD</div>
-              <h1>山行計画を、<br />Word計画書へ。</h1>
-              <p className="lead">ヤマレコの行程と公開情報を、内蔵のWord書式へ直接記入します。生成後は実際のWordを確認し、必要な箇所だけ手動で整えられます。</p>
+              <h1><span>YAMARECO</span><br />TO WORD</h1>
+              <p className="lead">ヤマレコの公開計画URLから、提出用のWord計画書を作成。行程と公開情報を内蔵書式へ反映し、実際のWordを確認しながら仕上げられます。</p>
 
               <div className="feature-row" aria-label="主な機能">
                 <span><Search size={18} /><strong>公開情報を整理</strong></span>
@@ -245,21 +276,28 @@ export default function Home() {
 
               <label htmlFor="yamareco-url">ヤマレコの公開URL</label>
               <div className="url-row">
-                <div className={`input-wrap ${urlChecked ? (validUrl ? "valid" : "invalid") : ""}`}>
+                <div className={`input-wrap ${url ? (validUrl ? "valid" : "invalid") : ""}`}>
                   <Link2 size={21} />
                   <input
+                    aria-describedby="url-status"
+                    aria-invalid={url ? !validUrl : undefined}
                     id="yamareco-url"
                     inputMode="url"
                     placeholder="https://www.yamareco.com/modules/..."
                     value={url}
-                    onChange={(event) => { setUrl(event.target.value.trim()); setUrlChecked(false); }}
-                    onBlur={() => url && checkUrl()}
+                    onChange={(event) => {
+                      const nextUrl = event.target.value.trim();
+                      setUrl(nextUrl);
+                      if (isYamarecoUrl(nextUrl)) setError("");
+                    }}
                   />
-                  {urlChecked && validUrl ? <CheckCircle2 className="valid-icon" size={20} /> : null}
+                  {url && validUrl ? <CheckCircle2 className="valid-icon" size={20} /> : null}
+                  {url && !validUrl ? <X className="invalid-icon" size={20} /> : null}
                 </div>
-                <button className="outline-button" onClick={checkUrl} type="button">URLを確認</button>
               </div>
-              <p className="helper">公開設定の山行記録・計画URLを入力してください。</p>
+              <p className={`helper url-status ${url ? (validUrl ? "valid" : "invalid") : ""}`} id="url-status" aria-live="polite">
+                {!url ? "入力すると自動でヤマレコURLを判定します。" : validUrl ? "ヤマレコの公開URLとして認識しました。" : "ヤマレコの公開URLではありません。"}
+              </p>
 
               {error ? <div className="error-message" role="alert">{error}</div> : null}
 
@@ -433,18 +471,27 @@ function ReviewView({
 
         <section className="editor-section" id="section-budget">
           <div className="section-title"><span>04</span><div><h2>予算・関係諸機関 <em className="source-badge web">Web検索</em></h2><p>新宿起点。JR片道101km以上は学割2割引き（10の位で切り捨て）</p></div></div>
-          <div className="editor-grid">
-            <label>予算 <span>項目｜金額｜備考</span><textarea value={listValue(plan.budgetItems)} onChange={(event) => onUpdate("budgetItems", toList(event.target.value))} /></label>
-            <label>関係諸機関 <span>名称｜連絡先｜用途</span><textarea value={listValue(plan.relatedOrganizations)} onChange={(event) => onUpdate("relatedOrganizations", toList(event.target.value))} /></label>
-          </div>
+          <EditablePlanTable
+            caption="予算"
+            headers={["項目", "金額", "備考"]}
+            rows={plan.budgetItems}
+            onChange={(rows) => onUpdate("budgetItems", rows)}
+          />
+          <EditablePlanTable
+            caption="関係諸機関"
+            headers={["項目", "名称", "連絡先"]}
+            lockedFirstColumn
+            rows={plan.relatedOrganizations}
+            onChange={(rows) => onUpdate("relatedOrganizations", rows)}
+          />
         </section>
 
         <section className="editor-section" id="section-map">
-          <div className="section-title"><span>05</span><div><h2>概念図 <em className="source-badge yamareco">ヤマレコ</em></h2><p>ヤマレコのルート地図スクリーンショットをWordへ貼付</p></div></div>
-          {plan.routeMapUrl ? <div className="route-map"><iframe src={plan.routeMapUrl} title="ヤマレコのルート概念図" /><a href={plan.routeMapUrl} rel="noreferrer" target="_blank">ヤマレコでルート地図を開く<ExternalLink size={15} /></a></div> : null}
+          <div className="section-title"><span>05</span><div><h2>概念図 <em className="source-badge yamareco">ヤマレコ</em></h2><p>ルート全体が見えるスクリーンショットをWordへ貼付</p></div></div>
+          {plan.routeMapUrl ? <a className="route-map-link" href={plan.routeMapUrl} rel="noreferrer" target="_blank">ヤマレコでルートを開いてスクリーンショットを撮る<ExternalLink size={15} /></a> : null}
           <ScreenshotPicker
             files={routeMapImage ? [routeMapImage] : []}
-            label="ルート地図のスクリーンショット"
+            label="ルート全体のスクリーンショット"
             onFiles={(files) => setRouteMapImage(files[0] ?? null)}
             onRemove={() => setRouteMapImage(null)}
           />
@@ -476,6 +523,53 @@ function ReviewView({
       </aside>
       {previewDocument ? <WordPreview document={previewDocument} onClose={() => setPreviewDocument(null)} /> : null}
     </section>
+  );
+}
+
+function EditablePlanTable({
+  caption,
+  headers,
+  rows,
+  lockedFirstColumn = false,
+  onChange,
+}: {
+  caption: string;
+  headers: string[];
+  rows: string[];
+  lockedFirstColumn?: boolean;
+  onChange: (rows: string[]) => void;
+}) {
+  function updateCell(rowIndex: number, columnIndex: number, value: string) {
+    const nextRows = [...rows];
+    const cells = (nextRows[rowIndex] ?? "").split(/[｜|]/).map((cell) => cell.trim());
+    while (cells.length < headers.length) cells.push("");
+    cells[columnIndex] = value.replace(/[｜|]/g, " ");
+    nextRows[rowIndex] = cells.slice(0, headers.length).join("｜");
+    onChange(nextRows);
+  }
+
+  return (
+    <div className="editable-table-wrap">
+      <h3>{caption}</h3>
+      <div className="editable-table-scroll">
+        <table className="editable-table">
+          <thead><tr>{headers.map((header) => <th key={header} scope="col">{header}</th>)}</tr></thead>
+          <tbody>
+            {rows.map((row, rowIndex) => {
+              const cells = row.split(/[｜|]/).map((cell) => cell.trim());
+              while (cells.length < headers.length) cells.push("");
+              return (
+                <tr key={`${caption}-${rowIndex}`}>
+                  {cells.slice(0, headers.length).map((cell, columnIndex) => columnIndex === 0 && lockedFirstColumn
+                    ? <th key={columnIndex} scope="row">{cell}</th>
+                    : <td key={columnIndex}><input aria-label={`${caption} ${rowIndex + 1}行目 ${headers[columnIndex]}`} value={cell} onChange={(event) => updateCell(rowIndex, columnIndex, event.target.value)} /></td>)}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
