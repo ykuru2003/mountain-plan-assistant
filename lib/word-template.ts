@@ -239,15 +239,6 @@ function appendImagesAfterBodyParagraph(zip: PizZip, document: Document, relatio
   });
 }
 
-function agencyRow(value: string) {
-  if (/バス/.test(value)) return 11;
-  if (/タクシー/.test(value)) return 12;
-  if (/警察|消防/.test(value)) return 13;
-  if (/山小屋|テント場|宿/.test(value)) return 14;
-  if (/病院|医療/.test(value)) return 15;
-  return null;
-}
-
 export function fillWordTemplate(
   template: ArrayBuffer,
   plan: WordPlan,
@@ -287,10 +278,6 @@ export function fillWordTemplate(
     const paragraph = appendParagraph(document, notesCell, "宿泊地URL：");
     appendHyperlink(document, paragraph, link.title, addExternalRelationship(relations, link.url));
   }
-  if (plan.routeMapUrl) {
-    const paragraph = appendParagraph(document, notesCell, "概念図：");
-    appendHyperlink(document, paragraph, "ヤマレコのルート地図を開く", addExternalRelationship(relations, plan.routeMapUrl));
-  }
   for (const source of plan.sources.slice(0, 8).filter((item) => /^https:\/\//.test(item.url))) {
     const paragraph = appendParagraph(document, notesCell, "参照：");
     appendHyperlink(document, paragraph, source.title, addExternalRelationship(relations, source.url));
@@ -303,16 +290,10 @@ export function fillWordTemplate(
     setCell(document, 5, index + 1, 3, note);
   }
 
-  const usedRows = new Set<number>();
-  const fallbackRows = [11, 12, 13, 14, 15];
-  for (const value of plan.relatedOrganizations) {
-    let row = agencyRow(value);
-    if (row === null || usedRows.has(row)) row = fallbackRows.find((candidate) => !usedRows.has(candidate)) ?? null;
-    if (row === null) break;
-    usedRows.add(row);
-    const [name = value, contact = "", use = ""] = splitColumns(value);
-    setCell(document, 6, row, 2, name);
-    setCell(document, 6, row, 3, [contact, use].filter(Boolean).join("／"));
+  for (let index = 0; index < 15; index += 1) {
+    const [, name = "", contact = ""] = splitColumns(plan.relatedOrganizations[index] ?? "");
+    setCell(document, 6, index + 1, 2, name);
+    setCell(document, 6, index + 1, 3, contact);
   }
 
   appendImagesAfterBodyParagraph(zip, document, relations, "〈概念図〉", images.routeMap ? [images.routeMap] : [], "route-map");
