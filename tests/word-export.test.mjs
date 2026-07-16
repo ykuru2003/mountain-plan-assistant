@@ -20,7 +20,11 @@ test("uses the built-in Word format and exposes preview/export controls", async 
   assert.doesNotMatch(page, /<iframe/);
   assert.match(page, /EditablePlanTable/);
   assert.match(exporter, /宿泊地URL/);
+  assert.match(exporter, /入山時刻：/);
+  assert.match(exporter, /下山時刻：/);
   assert.doesNotMatch(exporter, /ヤマレコのルート地図を開く/);
+  assert.doesNotMatch(exporter, /plan\.lodging && `宿泊：/);
+  assert.doesNotMatch(exporter, /appendParagraph\(document, notesCell, "参照："/);
   assert.match(exporter, /appendImagesAfterBodyParagraph/);
   assert.match(exporter, /〈時刻表など〉/);
   assert.doesNotMatch(exporter, /fetch\(/);
