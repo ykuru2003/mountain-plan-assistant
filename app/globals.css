@@ -120,6 +120,9 @@ textarea:focus { border-color: var(--blue); }
 .plan-editor, .sources-card { border: 1px solid var(--border); border-radius: 16px; background: white; padding: clamp(24px,3vw,38px); box-shadow: 0 5px 20px rgba(17,38,61,.05); }
 .editor-heading { display: flex; justify-content: space-between; align-items: end; padding-bottom: 20px; margin-bottom: 24px; border-bottom: 1px solid var(--border); font-size: 22px; font-weight: 750; }
 .editor-heading small { color: var(--muted); font-size: 12px; font-weight: 500; }
+.manual-edit-guide { margin: -6px 0 20px; padding: 14px 16px; display: flex; align-items: flex-start; gap: 12px; border: 1px solid #e4c879; border-radius: 12px; background: #fff9e5; }
+.manual-edit-guide > span { flex: 0 0 auto; padding: 4px 8px; border-radius: 999px; color: #70500f; background: #f5d978; font-size: 10px; font-weight: 850; }
+.manual-edit-guide p { margin: 1px 0 0; color: #725d2f; font-size: 12px; line-height: 1.6; }
 .section-nav { display: grid; grid-template-columns: repeat(5,1fr); gap: 7px; margin: 0 0 22px; }
 .section-nav a { min-height: 54px; padding: 9px 8px; display: flex; flex-direction: column; justify-content: center; gap: 3px; border: 1px solid #d3dfeb; border-radius: 10px; color: #3f5f80; background: #f8fbfe; text-decoration: none; font-size: 10px; font-weight: 750; }
 .section-nav a:hover { border-color: #8db4d7; background: var(--blue-pale); }
@@ -128,6 +131,9 @@ textarea:focus { border-color: var(--blue); }
 .plan-editor label > span { float: right; }
 .plan-editor input { width: 100%; min-height: 50px; margin-top: 8px; border: 1px solid #a9b9c9; border-radius: 9px; padding: 0 14px; color: var(--navy); font-weight: 500; }
 .plan-editor textarea { margin-top: 8px; min-height: 112px; font-weight: 450; }
+.plan-editor label.manual-field { margin-inline: -10px; padding: 10px; border: 1px solid #ead38f; border-radius: 12px; background: #fffaf0; }
+.plan-editor label.manual-field > span { color: #8a6515; font-weight: 750; }
+.plan-editor label.manual-field input, .plan-editor label.manual-field textarea { border-color: #d7bc70; background: #fffef8; }
 .editor-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
 .completion-card { display: grid; grid-template-columns: minmax(220px,.65fr) 1fr; gap: 24px; align-items: center; margin: -4px 0 28px; padding: 18px 20px; border: 1px solid #bad9ef; border-radius: 12px; background: #f2f9fe; }
 .completion-card > div { display: flex; align-items: center; gap: 11px; }
@@ -157,6 +163,8 @@ textarea:focus { border-color: var(--blue); }
 .editable-table thead th { padding: 10px 12px; color: #365a7e; background: #eef5fb; text-align: left; font-size: 11px; letter-spacing: .05em; }
 .editable-table tbody th { width: 22%; padding: 0 12px; color: #173b62; background: #f8fbfe; text-align: left; font-size: 12px; }
 .editable-table td { padding: 0; background: white; }
+.editable-table tr.needs-manual th, .editable-table tr.needs-manual td { background: #fff9e8; }
+.editable-table tr.needs-manual input { background: #fffdf5; }
 .editable-table input { min-height: 44px; margin: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; font-size: 12px; }
 .editable-table input:focus { position: relative; z-index: 1; outline: 2px solid var(--blue); outline-offset: -2px; }
 .safety-section { margin-inline: -14px; padding-inline: 14px; border-radius: 12px; background: linear-gradient(90deg,#fffaf1,transparent); }
@@ -262,12 +270,13 @@ textarea:focus { border-color: var(--blue); }
 .source-badge.hybrid { color: #5865a7; background: #f0f1fb; }
 .lodging-links { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: -7px 0 22px; padding: 13px 14px; border-left: 3px solid var(--blue); border-radius: 0 10px 10px 0; background: #eef5fc; font-size: 12px; }
 .lodging-links a { display: inline-flex; align-items: center; gap: 5px; color: var(--blue-dark); font-weight: 750; }
+.manual-link-note { margin: -8px 0 20px; padding: 10px 12px; border-left: 3px solid #d8b653; color: #725d2f; background: #fff9e7; font-size: 12px; }
 .word-card { border-color: #b8cfe5; border-radius: 16px; background: linear-gradient(145deg,#f8fbff,#e7f1fb); }
 .template-status { min-height: 58px; margin: 14px 0 12px; padding: 0 14px; display: flex !important; align-items: center; gap: 10px; border: 1px solid #bfd2e5; border-radius: 12px; background: rgba(255,255,255,.82); color: var(--blue-dark); }
 .template-status > span { display: flex; flex-direction: column; gap: 2px; }
 .template-status small { color: var(--muted); font-size: 11px; }
 .manual-card { border-color: #ddcda8; border-radius: 14px; background: #fbf7ef; }
-.screenshot-picker { border-color: #a9c4dd; border-radius: 14px; background: #f5f9fd; }
+.screenshot-picker { border-color: #d8bd6d; border-radius: 14px; background: #fff9e8; }
 .screenshot-button { border-radius: 10px; }
 .route-map-link { min-height: 50px; margin: 0 0 12px; padding: 0 16px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 1px solid #a9c3dc; border-radius: 12px; color: var(--blue-dark); background: #eef5fb; text-decoration: none; font-size: 13px; font-weight: 750; }
 .route-map-link:hover { border-color: var(--blue); background: #e2effa; }
