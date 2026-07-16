@@ -36,7 +36,9 @@ type Plan = {
   meeting: string;
   dismissal: string;
   entryPoint: string;
+  entryTime: string;
   exitPoint: string;
+  exitTime: string;
   summary: string;
   route: string;
   schedule: string[];
@@ -75,7 +77,9 @@ const EMPTY_PLAN: Plan = {
   meeting: "",
   dismissal: "",
   entryPoint: "",
+  entryTime: "",
   exitPoint: "",
+  exitTime: "",
   summary: "",
   route: "",
   schedule: [],
@@ -344,6 +348,7 @@ function ReviewView({
     { label: "山域", value: plan.area }, { label: "山行目的", value: plan.purpose },
     { label: "集合", value: plan.meeting }, { label: "解散", value: plan.dismissal },
     { label: "入山地点", value: plan.entryPoint }, { label: "下山地点", value: plan.exitPoint },
+    { label: "入山時刻", value: plan.entryTime }, { label: "下山時刻", value: plan.exitTime },
     { label: "日別行程", value: plan.schedule }, { label: "交通", value: plan.transport },
     { label: "宿泊", value: plan.lodging }, { label: "コースタイム倍率", value: plan.courseTimeMultiplier },
     { label: "日の入り", value: plan.sunset }, { label: "参照元", value: plan.sources },
@@ -412,6 +417,10 @@ function ReviewView({
       {notice ? <div className="notice">{notice}</div> : null}
       <article className="plan-editor">
         <div className="editor-heading"><span>WORD CONTENT EDITOR</span><small>修正内容を標準Word書式へ反映</small></div>
+        <div className="manual-edit-guide">
+          <span>手動入力</span>
+          <p>黄色の欄を確認・追記してください。入力後は画面上部の「Wordプレビュー」で、実際の記入位置を確認できます。</p>
+        </div>
         <nav className="section-nav" aria-label="入力項目へ移動">
           <a href="#section-basic"><span>01</span>基本情報</a>
           <a href="#section-route"><span>02</span>日別ルート</a>
@@ -434,20 +443,24 @@ function ReviewView({
             <label>日程 <span className="required-mark">必須</span><input aria-invalid={!plan.dates.trim()} aria-required="true" value={plan.dates} onChange={(event) => onUpdate("dates", event.target.value)} /></label>
             <label>山域 <span className="required-mark">必須</span><input aria-invalid={!plan.area.trim()} aria-required="true" value={plan.area} onChange={(event) => onUpdate("area", event.target.value)} /></label>
           </div>
-          <label>山行目的<textarea value={plan.purpose} onChange={(event) => onUpdate("purpose", event.target.value)} /></label>
+          <label className={!plan.purpose.trim() ? "manual-field" : ""}>山行目的<textarea value={plan.purpose} onChange={(event) => onUpdate("purpose", event.target.value)} /></label>
           <div className="editor-grid">
-            <label>集合<input value={plan.meeting} onChange={(event) => onUpdate("meeting", event.target.value)} /></label>
-            <label>解散<input value={plan.dismissal} onChange={(event) => onUpdate("dismissal", event.target.value)} /></label>
+            <label className="manual-field">集合 <span>手動入力</span><input value={plan.meeting} onChange={(event) => onUpdate("meeting", event.target.value)} /></label>
+            <label className="manual-field">解散 <span>手動入力</span><input value={plan.dismissal} onChange={(event) => onUpdate("dismissal", event.target.value)} /></label>
           </div>
           <div className="editor-grid">
             <label>入山地点<input value={plan.entryPoint} onChange={(event) => onUpdate("entryPoint", event.target.value)} /></label>
             <label>下山地点<input value={plan.exitPoint} onChange={(event) => onUpdate("exitPoint", event.target.value)} /></label>
           </div>
+          <div className="editor-grid">
+            <label>入山時刻<input inputMode="numeric" placeholder="00:00" value={plan.entryTime} onChange={(event) => onUpdate("entryTime", event.target.value)} /></label>
+            <label>下山時刻<input inputMode="numeric" placeholder="00:00" value={plan.exitTime} onChange={(event) => onUpdate("exitTime", event.target.value)} /></label>
+          </div>
         </section>
 
         <section className="editor-section" id="section-route">
           <div className="section-title"><span>02</span><div><h2>日別ルート <em className="source-badge yamareco">ヤマレコ</em></h2><p>主要地点を1列で表示し、時刻は5分単位</p></div></div>
-          <label>日別行程 <span>1行に1地点・日ごとに空行</span><textarea aria-invalid={!plan.schedule.some(Boolean)} aria-required="true" value={listValue(plan.schedule)} onChange={(event) => onUpdate("schedule", toScheduleList(event.target.value))} /></label>
+          <label>日別行程<textarea aria-invalid={!plan.schedule.some(Boolean)} aria-required="true" value={listValue(plan.schedule)} onChange={(event) => onUpdate("schedule", toScheduleList(event.target.value))} /></label>
           <div className="editor-grid">
             <label>コースタイム倍率<input value={plan.courseTimeMultiplier} onChange={(event) => onUpdate("courseTimeMultiplier", event.target.value)} /></label>
             <label>日の入り時刻 <em className="source-badge yamareco">ヤマレコ</em><input value={plan.sunset} onChange={(event) => onUpdate("sunset", event.target.value)} /></label>
@@ -456,10 +469,10 @@ function ReviewView({
 
         <section className="editor-section" id="section-access">
           <div className="section-title"><span>03</span><div><h2>交通・宿泊</h2><p>新宿起点の交通と、宿泊施設の予約・料金・水場条件</p></div></div>
-          <label>交通機関 <em className="source-badge web">Web検索</em><textarea aria-invalid={!plan.transport.trim()} aria-required="true" value={plan.transport} onChange={(event) => onUpdate("transport", event.target.value)} /></label>
-          <label>テント場・山小屋 <em className="source-badge web">Web検索＋ヤマレコ</em><textarea aria-invalid={!plan.lodging.trim()} aria-required="true" value={plan.lodging} onChange={(event) => onUpdate("lodging", event.target.value)} /></label>
-          {plan.lodgingLinks.length > 0 ? <div className="lodging-links"><strong>宿泊地リンク</strong>{plan.lodgingLinks.map((item) => <a href={item.url} key={item.url} rel="noreferrer" target="_blank">{item.title}<ExternalLink size={14} /></a>)}</div> : null}
-          <label>交通機関の時刻表 <em className="source-badge web">Web検索</em><span>1行に1便</span><textarea value={listValue(plan.timetables)} onChange={(event) => onUpdate("timetables", toList(event.target.value))} /></label>
+          <label className={!plan.transport.trim() ? "manual-field" : ""}>交通機関 <em className="source-badge web">Web検索</em><textarea aria-invalid={!plan.transport.trim()} aria-required="true" value={plan.transport} onChange={(event) => onUpdate("transport", event.target.value)} /></label>
+          <label className={!plan.lodging.trim() ? "manual-field" : ""}>テント場・山小屋 <em className="source-badge web">公式サイト検索</em><textarea aria-invalid={!plan.lodging.trim()} aria-required="true" value={plan.lodging} onChange={(event) => onUpdate("lodging", event.target.value)} /></label>
+          {plan.lodgingLinks.length > 0 ? <div className="lodging-links"><strong>宿泊施設の公式ページ</strong>{plan.lodgingLinks.map((item) => <a href={item.url} key={item.url} rel="noreferrer" target="_blank">{item.title}<ExternalLink size={14} /></a>)}</div> : <p className="manual-link-note">公式URLが取得できなかった場合は、施設名で公式サイトを確認してください。</p>}
+          <label>バス時刻表 <em className="source-badge web">往路・復路を判定</em><span>鉄道は不要／利用するバスのみ</span><textarea value={listValue(plan.timetables)} onChange={(event) => onUpdate("timetables", toList(event.target.value))} /></label>
           <ScreenshotPicker
             files={timetableImages}
             label="必要な時刻表のスクリーンショット"
@@ -559,7 +572,7 @@ function EditablePlanTable({
               const cells = row.split(/[｜|]/).map((cell) => cell.trim());
               while (cells.length < headers.length) cells.push("");
               return (
-                <tr key={`${caption}-${rowIndex}`}>
+                <tr className={cells.slice(1).every((cell) => !cell) ? "needs-manual" : ""} key={`${caption}-${rowIndex}`}>
                   {cells.slice(0, headers.length).map((cell, columnIndex) => columnIndex === 0 && lockedFirstColumn
                     ? <th key={columnIndex} scope="row">{cell}</th>
                     : <td key={columnIndex}><input aria-label={`${caption} ${rowIndex + 1}行目 ${headers[columnIndex]}`} value={cell} onChange={(event) => updateCell(rowIndex, columnIndex, event.target.value)} /></td>)}
