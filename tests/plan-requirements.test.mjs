@@ -47,7 +47,7 @@ test("blocks personal contact details before generation", async () => {
 
 test("returns every public-information section required by the Word sample", async () => {
   const sampleHtml = `
-    <html><head><title>妙高-火打 [山行計画] - ヤマレコ</title></head><body>
+    <html><head><title>パノラマ銀座-2026年07月11日[登山・山行記録]-ヤマレコ</title></head><body>
       <div class="label3">全員に公開</div>
       <div class="label3">無雪期ピークハント／縦走</div>
       <div class="label3">妙高・戸隠・雨飾</div>
@@ -56,9 +56,9 @@ test("returns every public-information section required by the Word sample", asy
       <a href="showmap.php?plid=6987624">地図</a>
       <div class="record-detail-content-time-block">
         <div class="day">1日目</div>
-        <div class="item"><div class="time1">11:00</div><div class="name">笹ケ峰登山口</div></div>
+        <div class="item" title="トイレ"><div class="time1">11:00</div><div class="name">笹ケ峰登山口</div></div>
         <div class="item"><div class="time1">12:12</div><div class="name">黒沢橋</div></div>
-        <div class="item"><div class="time1">15:18</div><div class="name">黒沢池ヒュッテ</div></div>
+        <div class="item"><span class="icon-water"></span><div class="time1">15:18</div><div class="name">黒沢池ヒュッテ</div></div>
       </div>
       <div class="record-detail-content-time-block">
         <div class="day">2日目</div>
@@ -96,8 +96,8 @@ test("returns every public-information section required by the Word sample", asy
   assert.equal(response.status, 200);
   const { plan } = await response.json();
   const stringFields = [
-    "title", "dates", "area", "purpose", "meeting", "dismissal", "entryPoint",
-    "exitPoint", "summary", "route", "courseTimeMultiplier", "sunset", "weather",
+    "title", "dates", "area", "purpose", "meeting", "dismissal", "entryPoint", "entryTime",
+    "exitPoint", "exitTime", "summary", "route", "courseTimeMultiplier", "sunset", "weather",
     "transport", "lodging", "emergency", "emergencyEvacuation", "conceptMap", "routeMapUrl",
   ];
   const arrayFields = [
@@ -118,17 +118,19 @@ test("returns every public-information section required by the Word sample", asy
   assert.equal(plan.meeting, "");
   assert.equal(plan.dismissal, "");
   assert.doesNotMatch(plan.dates, /&#\d+;/);
-  assert.equal(plan.title, "20260718-19 火打-妙高 計画書");
+  assert.equal(plan.title, "20260718-19 パノラマ銀座 計画書");
   assert.equal(plan.dates, "2026年07月18日(土) ～ 2026年07月19日(日)");
   assert.equal(plan.area, "妙高・戸隠・雨飾");
   assert.ok(plan.schedule.every((line) => /^＜\d+日目 \d+\/\d+\([日月火水木金土]\)＞$/.test(line) || /^\d{2}:\d{2} \S/.test(line)));
   assert.equal(plan.schedule[0], "＜1日目 7/18(土)＞");
   assert.ok(plan.schedule.includes("＜2日目 7/19(日)＞"));
-  assert.ok(plan.schedule.includes("11:00 笹ケ峰登山口"));
-  assert.ok(plan.schedule.includes("15:20 黒沢池ヒュッテ"));
+  assert.ok(plan.schedule.includes("11:00 笹ケ峰登山口 🚻"));
+  assert.ok(plan.schedule.includes("15:20 黒沢池ヒュッテ 💧"));
   assert.ok(plan.schedule.includes("06:35 妙高山北峰"));
   assert.ok(plan.schedule.includes("12:35 火打山"));
   assert.ok(plan.schedule.includes("16:55 笹ケ峰登山口"));
+  assert.equal(plan.entryTime, "11:00");
+  assert.equal(plan.exitTime, "16:55");
   assert.equal(plan.budgetItems.length, 6);
   assert.equal(plan.relatedOrganizations.length, 15);
   assert.equal(plan.relatedOrganizations[0], "現地連絡先｜｜");
@@ -137,4 +139,10 @@ test("returns every public-information section required by the Word sample", asy
     plan.routeMapUrl === yamarecoUrl || /showmap\.php\?plid=\d+/.test(plan.routeMapUrl),
     "route map falls back to the public plan when Yamareco blocks metadata fetch",
   );
+});
+
+test("falls back to web search instructions when Yamareco has no sunset", async () => {
+  const route = await import("node:fs/promises").then(({ readFile }) => readFile(new URL("../app/api/generate/route.ts", import.meta.url), "utf8"));
+  assert.match(route, /取得できず（Web検索で補完すること）/);
+  assert.match(route, /取得できていなければ、対象日と山域に対応する日の入り時刻/);
 });
