@@ -303,6 +303,10 @@ function ReviewView({
   const [timetableImages, setTimetableImages] = useState<File[]>([]);
   const listValue = (value: string[]) => value.join("\n");
   const toList = (value: string) => value.split("\n").map((item) => item.trim()).filter(Boolean);
+  const toScheduleList = (value: string) => value
+    .split("\n")
+    .map((item) => item.trim())
+    .slice(value.startsWith("\n") ? 1 : 0, value.endsWith("\n") ? -1 : undefined);
   const requiredFields: Array<{ label: string; value: string | unknown[] }> = [
     { label: "計画名", value: plan.title }, { label: "日程", value: plan.dates },
     { label: "山域", value: plan.area }, { label: "山行目的", value: plan.purpose },
@@ -410,8 +414,8 @@ function ReviewView({
         </section>
 
         <section className="editor-section" id="section-route">
-          <div className="section-title"><span>02</span><div><h2>日別ルート <em className="source-badge yamareco">ヤマレコ</em></h2><p>水場・トイレ・山頂・小屋だけを抽出し、時刻は5分単位</p></div></div>
-          <label>日別行程 <span>1日につき1行・必須</span><textarea aria-invalid={!plan.schedule.length} aria-required="true" value={listValue(plan.schedule)} onChange={(event) => onUpdate("schedule", toList(event.target.value))} /></label>
+          <div className="section-title"><span>02</span><div><h2>日別ルート <em className="source-badge yamareco">ヤマレコ</em></h2><p>主要地点を1列で表示し、時刻は5分単位</p></div></div>
+          <label>日別行程 <span>1行に1地点・日ごとに空行</span><textarea aria-invalid={!plan.schedule.some(Boolean)} aria-required="true" value={listValue(plan.schedule)} onChange={(event) => onUpdate("schedule", toScheduleList(event.target.value))} /></label>
           <div className="editor-grid">
             <label>コースタイム倍率<input value={plan.courseTimeMultiplier} onChange={(event) => onUpdate("courseTimeMultiplier", event.target.value)} /></label>
             <label>日の入り時刻 <em className="source-badge yamareco">ヤマレコ</em><input value={plan.sunset} onChange={(event) => onUpdate("sunset", event.target.value)} /></label>
