@@ -20,7 +20,9 @@ export type WordPlan = {
   meeting: string;
   dismissal: string;
   entryPoint: string;
+  entryTime: string;
   exitPoint: string;
+  exitTime: string;
   summary: string;
   route: string;
   schedule: string[];
@@ -260,8 +262,8 @@ export function fillWordTemplate(
   setCell(document, 0, 2, 1, plan.purpose);
   setCell(document, 0, 3, 1, cleanManualMarker(plan.meeting));
   setCell(document, 0, 3, 4, cleanManualMarker(plan.dismissal));
-  setCell(document, 0, 4, 1, plan.entryPoint);
-  setCell(document, 0, 4, 4, plan.exitPoint);
+  setCell(document, 0, 4, 1, [plan.entryPoint, plan.entryTime && `入山時刻：${plan.entryTime}`].filter(Boolean));
+  setCell(document, 0, 4, 4, [plan.exitPoint, plan.exitTime && `下山時刻：${plan.exitTime}`].filter(Boolean));
   setCell(document, 0, 5, 1, plan.schedule);
 
   const notesCell = getCell(document, 0, 7, 1);
@@ -271,18 +273,12 @@ export function fillWordTemplate(
     plan.sunset && `日没：${plan.sunset}`,
     cleanManualMarker(plan.transport) && `交通：${cleanManualMarker(plan.transport)}`,
     plan.timetables.length && `時刻表：${plan.timetables.join("／")}`,
-    plan.lodging && `宿泊：${plan.lodging}`,
   ].filter(Boolean) as string[];
   for (const line of notes) appendParagraph(document, notesCell, line);
   for (const link of plan.lodgingLinks.filter((item) => /^https:\/\//.test(item.url))) {
     const paragraph = appendParagraph(document, notesCell, "宿泊地URL：");
     appendHyperlink(document, paragraph, link.title, addExternalRelationship(relations, link.url));
   }
-  for (const source of plan.sources.slice(0, 8).filter((item) => /^https:\/\//.test(item.url))) {
-    const paragraph = appendParagraph(document, notesCell, "参照：");
-    appendHyperlink(document, paragraph, source.title, addExternalRelationship(relations, source.url));
-  }
-
   for (let index = 0; index < 6; index += 1) {
     const [item = "", amount = "", note = ""] = splitColumns(plan.budgetItems[index] ?? "");
     setCell(document, 5, index + 1, 1, item);
