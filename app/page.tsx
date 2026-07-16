@@ -10,7 +10,6 @@ import {
   Eye,
   ExternalLink,
   FileText,
-  HelpCircle,
   Link2,
   LockKeyhole,
   LoaderCircle,
@@ -201,7 +200,6 @@ export default function Home() {
           <span className="brand-copy"><strong>登山計画書</strong><small>ALPINE DOCUMENTS</small></span>
         </a>
         <nav className="header-actions" aria-label="補助メニュー">
-          <a href="#guide"><HelpCircle size={19} />使い方</a>
           <span className="public-chip"><ShieldCheck size={19} />標準Word書式 内蔵</span>
         </nav>
       </header>
@@ -275,10 +273,6 @@ export default function Home() {
           </section>
         )}
 
-        <section className="guide" id="guide">
-          <Search size={22} />
-          <div><strong>標準書式を内蔵</strong><p>見本のWord書式はアプリに組み込み済みです。公開情報を確認し、地図と時刻表の画像を添えて、そのまま計画書として出力できます。</p></div>
-        </section>
       </div>
     </main>
   );
