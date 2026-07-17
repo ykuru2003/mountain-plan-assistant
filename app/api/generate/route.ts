@@ -346,6 +346,7 @@ function collectSources(payload: Record<string, unknown>, originalUrl: string): 
 }
 
 export async function POST(request: Request) {
+  const requestStartedAt = Date.now();
   const body = await request.json().catch(() => null) as { url?: string; notes?: string } | null;
   const url = body?.url?.trim() ?? "";
   const notes = body?.notes?.trim().slice(0, 400) ?? "";
@@ -356,8 +357,14 @@ export async function POST(request: Request) {
 
   const apiKey = process.env.OPENAI_API_KEY;
   const publicMeta = await readPublicPlanMeta(url);
+  const yamarecoCompletedAt = Date.now();
   const publicTitle = publicMeta.title;
   if (!apiKey) {
+    console.info("[YAMARECO TO WORD] generation timing", {
+      mode: "yamareco-only",
+      yamarecoMs: yamarecoCompletedAt - requestStartedAt,
+      totalMs: Date.now() - requestStartedAt,
+    });
     return NextResponse.json({
       plan: demoPlan(url, notes, publicTitle, publicMeta.routeMapUrl, publicMeta.parsed, publicMeta.sunset),
       demoMode: true,
@@ -383,6 +390,7 @@ export async function POST(request: Request) {
   });
 
   const payload = await response.json() as Record<string, unknown>;
+  const webSearchCompletedAt = Date.now();
   if (!response.ok) {
     const message = payload.error && typeof payload.error === "object" && typeof (payload.error as Record<string, unknown>).message === "string"
       ? (payload.error as Record<string, unknown>).message as string : "公開情報を整理できませんでした。";
@@ -429,5 +437,12 @@ export async function POST(request: Request) {
   for (const source of [...plan.sources, ...plan.lodgingLinks, ...gatheredSources]) {
     try { new URL(source.url); sources.set(source.url, source); } catch { /* ignore invalid source URLs */ }
   }
+  console.info("[YAMARECO TO WORD] generation timing", {
+    mode: "yamareco-and-web",
+    yamarecoMs: yamarecoCompletedAt - requestStartedAt,
+    webSearchMs: webSearchCompletedAt - yamarecoCompletedAt,
+    transcriptionMs: Date.now() - webSearchCompletedAt,
+    totalMs: Date.now() - requestStartedAt,
+  });
   return NextResponse.json({ plan: { ...plan, sources: [...sources.values()] } });
 }
