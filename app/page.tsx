@@ -160,7 +160,18 @@ function normalizePlan(value: (Partial<Plan> & { access?: string; equipment?: st
   return merged;
 }
 
-const STAGES = ["ヤマレコを読み込み", "交通・宿泊を確認", "計画書へ整形"];
+const PROGRESS_STAGES = [
+  { label: "ヤマレコを読み取り中", detail: "日程・ルート・山域を確認" },
+  { label: "Web検索中", detail: "交通・宿泊・日の入りを確認" },
+  { label: "Wordへ転記中", detail: "計画書の項目へ反映" },
+];
+
+function formatElapsed(milliseconds: number) {
+  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
 
 function isYamarecoUrl(value: string) {
   try {
@@ -179,16 +190,19 @@ export default function Home() {
   const [plan, setPlan] = useState<Plan>(EMPTY_PLAN);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const [generationDurationMs, setGenerationDurationMs] = useState(0);
 
   const validUrl = useMemo(() => isYamarecoUrl(url), [url]);
 
   useEffect(() => {
     if (status !== "generating") return;
-    const first = window.setTimeout(() => setStage(1), 900);
-    const second = window.setTimeout(() => setStage(2), 2200);
+    const startedAt = performance.now();
+    const timer = window.setInterval(() => setElapsedMs(performance.now() - startedAt), 200);
+    const first = window.setTimeout(() => setStage(1), 1800);
     return () => {
+      window.clearInterval(timer);
       window.clearTimeout(first);
-      window.clearTimeout(second);
     };
   }, [status]);
 
@@ -200,7 +214,10 @@ export default function Home() {
     setError("");
     setNotice("");
     setStage(0);
+    setElapsedMs(0);
+    setGenerationDurationMs(0);
     setStatus("generating");
+    const startedAt = performance.now();
 
     try {
       const response = await fetch("/api/generate", {
@@ -210,11 +227,25 @@ export default function Home() {
       });
       const data = (await response.json()) as GenerateResponse & { error?: string };
       if (!response.ok) throw new Error(data.error ?? "計画書案を作成できませんでした。");
+      setStage(2);
       const normalized = normalizePlan(data.plan);
       setPlan(normalized);
       setNotice(data.warning ?? (data.demoMode ? "Web検索は未設定です。ヤマレコから取得した内容を確認してください。" : ""));
+      await new Promise((resolve) => window.setTimeout(resolve, 450));
+      const durationMs = performance.now() - startedAt;
+      setElapsedMs(durationMs);
+      setGenerationDurationMs(durationMs);
+      console.info("[YAMARECO TO WORD] generation completed", {
+        durationMs: Math.round(durationMs),
+        completedAt: new Date().toISOString(),
+      });
       setStatus("review");
     } catch (reason) {
+      const durationMs = performance.now() - startedAt;
+      console.info("[YAMARECO TO WORD] generation failed", {
+        durationMs: Math.round(durationMs),
+        completedAt: new Date().toISOString(),
+      });
       setError(reason instanceof Error ? reason.message : "計画書案を作成できませんでした。");
       setStatus("input");
     }
@@ -234,9 +265,6 @@ export default function Home() {
           <span className="brand-mark"><Mountain size={28} strokeWidth={2.4} /></span>
           <span className="brand-copy"><strong>登山計画書</strong><small>ALPINE DOCUMENTS</small></span>
         </a>
-        <nav className="header-actions" aria-label="補助メニュー">
-          <span className="public-chip"><ShieldCheck size={19} />標準Word書式 内蔵</span>
-        </nav>
       </header>
 
       <div className="page" id="main-content">
@@ -262,6 +290,7 @@ export default function Home() {
           <ReviewView
             plan={plan}
             notice={notice}
+            generationDurationMs={generationDurationMs}
             onBack={() => setStatus("input")}
             onUpdate={updatePlan}
           />
@@ -305,11 +334,29 @@ export default function Home() {
 
               {error ? <div className="error-message" role="alert">{error}</div> : null}
 
-              <button aria-live="polite" className="primary-button" disabled={status === "generating"} onClick={generatePlan} type="button">
+              <button className="primary-button" disabled={status === "generating"} onClick={generatePlan} type="button">
                 {status === "generating" ? <LoaderCircle className="spin" size={23} /> : <Route size={23} />}
-                {status === "generating" ? STAGES[stage] : "Word計画書を作成"}
+                {status === "generating" ? "計画書を作成中" : "Word計画書を作成"}
               </button>
-              <p className="time-note"><Clock3 size={18} />テンプレートの登録・選択は不要です。</p>
+              {status === "generating" ? (
+                <div className="generation-progress" aria-live="polite" role="status">
+                  <div className="generation-progress-head">
+                    <span>{PROGRESS_STAGES[stage].label}</span>
+                    <time><Clock3 size={16} />{formatElapsed(elapsedMs)}</time>
+                  </div>
+                  <div className="generation-progress-track" aria-label="作成進捗">
+                    <span style={{ width: `${stage === 0 ? Math.min(28, 8 + elapsedMs / 100) : stage === 1 ? Math.min(88, 36 + elapsedMs / 650) : 96}%` }} />
+                  </div>
+                  <ol className="generation-stage-list">
+                    {PROGRESS_STAGES.map((item, index) => (
+                      <li className={index < stage ? "complete" : index === stage ? "active" : ""} key={item.label}>
+                        <span>{index < stage ? <Check size={14} /> : index + 1}</span>
+                        <div><strong>{item.label.replace("中", "")}</strong><small>{item.detail}</small></div>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              ) : null}
             </article>
 
           </section>
@@ -323,11 +370,13 @@ export default function Home() {
 function ReviewView({
   plan,
   notice,
+  generationDurationMs,
   onBack,
   onUpdate,
 }: {
   plan: Plan;
   notice: string;
+  generationDurationMs: number;
   onBack: () => void;
   onUpdate: <K extends keyof Plan>(key: K, value: Plan[K]) => void;
 }) {
@@ -407,7 +456,7 @@ function ReviewView({
     <section className="review-layout">
       <div className="review-toolbar">
         <button className="text-button" onClick={onBack} type="button"><ArrowLeft size={18} />入力へ戻る</button>
-        <div className="review-toolbar-title"><small>編集中の計画書</small><strong>{plan.title || "名称未設定の計画書"}</strong></div>
+        <div className="review-toolbar-title"><small>編集中の計画書</small><strong>{plan.title || "名称未設定の計画書"}</strong>{generationDurationMs > 0 ? <span className="generation-result"><Clock3 size={13} />作成時間 {formatElapsed(generationDurationMs)}</span> : null}</div>
         <div className="review-toolbar-actions">
           <button className="outline-button" disabled={previewBusy} onClick={previewWord} type="button"><Eye size={17} />{previewBusy ? "作成中" : "Wordプレビュー"}</button>
           <button className="primary-small" disabled={wordBusy} onClick={downloadWord} type="button"><Download size={17} />{wordBusy ? "作成中" : "Word出力"}</button>
