@@ -18,6 +18,7 @@ import {
   Minus,
   Plus,
   Search,
+  Share2,
   ShieldCheck,
   Route,
   Upload,
@@ -335,24 +336,24 @@ export default function Home() {
         ) : (
           <section className="workspace">
             <article className="card input-card">
-              <div className="eyebrow"><MapPinned size={18} />YAMARECO TO WORD</div>
+              <div className="eyebrow"><Share2 size={18} />YAMARECO TO WORD</div>
               <h1><span>YAMARECO</span><br />TO WORD</h1>
               <p className="lead">ヤマレコの公開計画URLからWord計画書を自動作成。</p>
 
               <div className="creation-flow" aria-label="Word計画書の作成フロー">
                 <div className="flow-card flow-sources">
                   <small>01</small>
-                  <strong><MapPinned size={21} />ヤマレコのURL</strong>
+                  <strong><Share2 size={21} />ヤマレコのURL</strong>
                 </div>
                 <span className="flow-arrow" aria-hidden="true"><ArrowRight size={20} /></span>
                 <div className="flow-card">
                   <small>02</small>
-                  <strong><Search size={21} />web検索</strong>
+                  <strong><Share2 size={21} />web検索</strong>
                 </div>
                 <span className="flow-arrow" aria-hidden="true"><ArrowRight size={20} /></span>
                 <div className="flow-card flow-output">
                   <small>03</small>
-                  <strong><FileText size={21} />word完成</strong>
+                  <strong><Share2 size={21} />word完成</strong>
                 </div>
               </div>
 

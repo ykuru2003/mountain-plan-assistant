@@ -50,7 +50,7 @@ h1 { font-size: clamp(34px,4vw,54px); line-height: 1.13; margin: 16px 0 13px; le
 h1 span { color: var(--blue-dark); letter-spacing: -.045em; }
 .lead { margin: 0 0 30px; color: var(--muted); line-height: 1.7; }
 .creation-flow { display: grid; grid-template-columns: minmax(0,1.3fr) 34px minmax(0,1fr) 34px minmax(0,1fr); align-items: stretch; margin: -8px 0 30px; }
-.flow-card { min-width: 0; min-height: 86px; padding: 15px 16px; display: flex; flex-direction: column; justify-content: center; gap: 10px; border: 1px solid #c9d9e8; border-radius: 14px; color: #244b73; background: linear-gradient(145deg,#fbfdff,#f1f7fc); box-shadow: 0 7px 18px rgba(24,74,123,.07); }
+.flow-card { min-width: 0; min-height: 70px; padding: 12px 16px; display: flex; flex-direction: column; justify-content: center; gap: 8px; border: 1px solid #c9d9e8; border-radius: 14px; color: #244b73; background: linear-gradient(145deg,#fbfdff,#f1f7fc); box-shadow: 0 7px 18px rgba(24,74,123,.07); }
 .flow-card small { color: #7190ac; font-size: 9px; font-weight: 850; letter-spacing: .16em; }
 .flow-card strong { display: flex; align-items: center; gap: 9px; font-size: 13px; letter-spacing: .01em; }
 .flow-card svg { flex: 0 0 auto; color: var(--blue); }
