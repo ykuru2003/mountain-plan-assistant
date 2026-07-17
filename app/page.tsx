@@ -281,9 +281,9 @@ export default function Home() {
     <main className="app-shell">
       <a className="skip-link" href="#main-content">本文へ移動</a>
       <header className="topbar">
-        <a className="brand" href="#top" aria-label="登山計画書 Field Desk トップ">
+        <a className="brand" href="#top" aria-label="YAMARECO TO WORD トップ">
           <span className="brand-mark"><Mountain size={28} strokeWidth={2.4} /></span>
-          <span className="brand-copy"><strong>登山計画書</strong><small>ALPINE DOCUMENTS</small></span>
+          <span className="brand-copy"><strong>YAMARECO TO WORD</strong></span>
         </a>
       </header>
 
@@ -319,7 +319,7 @@ export default function Home() {
             <article className="card input-card">
               <div className="eyebrow"><MapPinned size={18} />YAMARECO TO WORD</div>
               <h1><span>YAMARECO</span><br />TO WORD</h1>
-              <p className="lead">ヤマレコの公開計画URLから、提出用のWord計画書を作成。行程と公開情報を内蔵書式へ反映し、実際のWordを確認しながら仕上げられます。</p>
+              <p className="lead">ヤマレコの公開計画URLから、Word計画書を自動作成。</p>
 
               <div className="feature-row" aria-label="主な機能">
                 <span><Search size={18} /><strong>公開情報を整理</strong></span>
