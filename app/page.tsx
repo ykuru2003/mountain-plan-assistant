@@ -11,7 +11,6 @@ import {
   ExternalLink,
   FileText,
   Link2,
-  LockKeyhole,
   LoaderCircle,
   MapPinned,
   Maximize2,
@@ -44,6 +43,7 @@ type Plan = {
   schedule: string[];
   courseTimeMultiplier: string;
   sunset: string;
+  sunrise: string;
   weather: string;
   risks: string[];
   transport: string;
@@ -85,6 +85,7 @@ const EMPTY_PLAN: Plan = {
   schedule: [],
   courseTimeMultiplier: "",
   sunset: "",
+  sunrise: "",
   weather: "",
   risks: [],
   transport: "",
@@ -110,12 +111,12 @@ const ARRAY_FIELDS: Array<keyof Plan> = [
 ];
 
 const BUDGET_DEFAULTS = [
-  "交通費｜｜鉄道（新宿から往復・学割適用後）",
+  "交通費｜｜鉄道（新宿から往復）",
   "交通費｜｜バス（駅から登山口まで往復）",
   "テント場代｜｜",
   "温泉｜｜",
   "その他｜｜食費など",
-  "合計｜｜",
+  "合計｜＋α｜",
 ];
 
 const AGENCY_TYPES = [
@@ -137,11 +138,30 @@ function normalizeAgencyRows(values: string[]) {
             : /タクシー/.test(value) ? "タクシー"
               : /バス/.test(value) ? "バス" : "";
     const index = AGENCY_TYPES.findIndex((type, itemIndex) => type === inferred && !used.has(itemIndex));
-    if (index < 0) continue;
+    const contact = rawContact && !/^TEL\s*[:：]/i.test(rawContact) && /\d/.test(rawContact)
+      ? `TEL: ${rawContact}` : rawContact.replace(/^TEL\s*[:：]\s*/i, "TEL: ");
+    if (index < 0) {
+      if (inferred || rawType) rows.push(`${inferred || rawType}｜${exact ? rawName : rawType}｜${contact || rawName}`);
+      continue;
+    }
     used.add(index);
-    rows[index] = exact ? `${rawType}｜${rawName}｜${rawContact}` : `${inferred}｜${rawType}｜${rawName}`;
+    rows[index] = exact ? `${rawType}｜${rawName}｜${contact}` : `${inferred}｜${rawType}｜${rawName && `TEL: ${rawName.replace(/^TEL\s*[:：]\s*/i, "")}`}`;
   }
   return rows;
+}
+
+function normalizeBudgetRows(values: string[]) {
+  const rows = values.length ? values.slice(0, 6) : [...BUDGET_DEFAULTS];
+  while (rows.length < 6) rows.push(BUDGET_DEFAULTS[rows.length]);
+  return rows.map((row, index) => {
+    const [item = "", rawAmount = "", rawNote = ""] = row.split(/[｜|]/).map((part) => part.trim());
+    let amount = /^(?:0|0円|¥0|￥0)$/.test(rawAmount) ? "" : rawAmount;
+    const note = rawNote.replace(/1人分概算/g, "").trim();
+    if (/タクシー/.test(`${item}${note}`)) amount = "未定";
+    if (index === 5 && amount && !/[+＋]α$/.test(amount)) amount = `${amount}＋α`;
+    if (index === 5 && !amount) amount = "＋α";
+    return `${item || BUDGET_DEFAULTS[index].split("｜")[0]}｜${amount}｜${note}`;
+  });
 }
 
 function normalizePlan(value: (Partial<Plan> & { access?: string; equipment?: string[] }) | null | undefined): Plan {
@@ -154,9 +174,9 @@ function normalizePlan(value: (Partial<Plan> & { access?: string; equipment?: st
   for (const key of ARRAY_FIELDS) {
     if (!Array.isArray(merged[key])) (merged as Record<string, unknown>)[key] = [];
   }
-  merged.budgetItems = merged.budgetItems.length ? merged.budgetItems.slice(0, 6) : BUDGET_DEFAULTS;
-  while (merged.budgetItems.length < 6) merged.budgetItems.push(BUDGET_DEFAULTS[merged.budgetItems.length]);
+  merged.budgetItems = normalizeBudgetRows(merged.budgetItems);
   merged.relatedOrganizations = normalizeAgencyRows(merged.relatedOrganizations);
+  merged.transport = merged.transport.replace(/\s*(復路\s*[:：])/g, "\n$1").trim();
   return merged;
 }
 
@@ -386,6 +406,8 @@ function ReviewView({
   const [previewDocument, setPreviewDocument] = useState<Uint8Array | null>(null);
   const [routeMapImage, setRouteMapImage] = useState<File | null>(null);
   const [timetableImages, setTimetableImages] = useState<File[]>([]);
+  const [budgetRecalculating, setBudgetRecalculating] = useState(false);
+  const transportRecalculation = useRef<number | null>(null);
   const listValue = (value: string[]) => value.join("\n");
   const toList = (value: string) => value.split("\n").map((item) => item.trim()).filter(Boolean);
   const toScheduleList = (value: string) => value
@@ -402,9 +424,35 @@ function ReviewView({
     { label: "宿泊", value: plan.lodging }, { label: "コースタイム倍率", value: plan.courseTimeMultiplier },
     { label: "日の入り", value: plan.sunset }, { label: "参照元", value: plan.sources },
   ];
+  const scheduleDayCount = plan.schedule.filter((line) => /^＜\d+日目/.test(line)).length;
+  if (scheduleDayCount > 1) requiredFields.push({ label: "日の出", value: plan.sunrise });
   const missingFields = requiredFields.filter(({ value }) => Array.isArray(value) ? value.length === 0 : value.trim().length === 0);
   const completed = requiredFields.length - missingFields.length;
   const completion = Math.round((completed / requiredFields.length) * 100);
+
+  useEffect(() => () => {
+    if (transportRecalculation.current) window.clearTimeout(transportRecalculation.current);
+  }, []);
+
+  function updateTransport(value: string) {
+    onUpdate("transport", value);
+    if (transportRecalculation.current) window.clearTimeout(transportRecalculation.current);
+    transportRecalculation.current = window.setTimeout(async () => {
+      if (!value.trim()) return;
+      setBudgetRecalculating(true);
+      try {
+        const response = await fetch("/api/recalculate-budget", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ transport: value, budgetItems: plan.budgetItems }),
+        });
+        const data = await response.json() as { budgetItems?: string[] };
+        if (response.ok && data.budgetItems) onUpdate("budgetItems", normalizeBudgetRows(data.budgetItems));
+      } finally {
+        setBudgetRecalculating(false);
+      }
+    }, 1400);
+  }
 
   async function buildWordDocument() {
     const toWordImage = async (file: File): Promise<WordImage> => ({
@@ -486,45 +534,52 @@ function ReviewView({
         </div>
 
         <section className="editor-section" id="section-basic">
-          <div className="section-title"><span>01</span><div><h2>基本情報 <em className="source-badge web">Web検索</em></h2><p>計画書1ページ目の基本欄</p></div></div>
-          <label>計画名 <span className="required-mark">必須</span><input aria-invalid={!plan.title.trim()} aria-required="true" value={plan.title} onChange={(event) => onUpdate("title", event.target.value)} /></label>
+          <div className="section-title"><span>01</span><div><h2>基本情報</h2><p>計画書1ページ目の基本欄</p></div></div>
+          <label>計画名 <em className="source-badge yamareco">ヤマレコ</em><span className="required-mark">必須</span><input aria-invalid={!plan.title.trim()} aria-required="true" value={plan.title} onChange={(event) => onUpdate("title", event.target.value)} /></label>
           <div className="editor-grid">
-            <label>日程 <span className="required-mark">必須</span><input aria-invalid={!plan.dates.trim()} aria-required="true" value={plan.dates} onChange={(event) => onUpdate("dates", event.target.value)} /></label>
-            <label>山域 <span className="required-mark">必須</span><input aria-invalid={!plan.area.trim()} aria-required="true" value={plan.area} onChange={(event) => onUpdate("area", event.target.value)} /></label>
+            <label>日程 <em className="source-badge yamareco">ヤマレコ</em><span className="required-mark">必須</span><input aria-invalid={!plan.dates.trim()} aria-required="true" value={plan.dates} onChange={(event) => onUpdate("dates", event.target.value)} /></label>
+            <label>山域 <em className="source-badge yamareco">ヤマレコ</em><span className="required-mark">必須</span><input aria-invalid={!plan.area.trim()} aria-required="true" value={plan.area} onChange={(event) => onUpdate("area", event.target.value)} /></label>
           </div>
-          <label className={!plan.purpose.trim() ? "manual-field" : ""}>山行目的<textarea value={plan.purpose} onChange={(event) => onUpdate("purpose", event.target.value)} /></label>
+          <label className="manual-field">山行目的 <span>手動入力</span><input value={plan.purpose} onChange={(event) => onUpdate("purpose", event.target.value)} /></label>
           <div className="editor-grid">
             <label className="manual-field">集合 <span>手動入力</span><input value={plan.meeting} onChange={(event) => onUpdate("meeting", event.target.value)} /></label>
             <label className="manual-field">解散 <span>手動入力</span><input value={plan.dismissal} onChange={(event) => onUpdate("dismissal", event.target.value)} /></label>
           </div>
           <div className="editor-grid">
-            <label>入山地点<input value={plan.entryPoint} onChange={(event) => onUpdate("entryPoint", event.target.value)} /></label>
-            <label>下山地点<input value={plan.exitPoint} onChange={(event) => onUpdate("exitPoint", event.target.value)} /></label>
+            <label>入山地点 <em className="source-badge yamareco">ヤマレコ</em><input value={plan.entryPoint} onChange={(event) => onUpdate("entryPoint", event.target.value)} /></label>
+            <label>下山地点 <em className="source-badge yamareco">ヤマレコ</em><input value={plan.exitPoint} onChange={(event) => onUpdate("exitPoint", event.target.value)} /></label>
           </div>
           <div className="editor-grid">
-            <label>入山時刻<input inputMode="numeric" placeholder="00:00" value={plan.entryTime} onChange={(event) => onUpdate("entryTime", event.target.value)} /></label>
-            <label>下山時刻<input inputMode="numeric" placeholder="00:00" value={plan.exitTime} onChange={(event) => onUpdate("exitTime", event.target.value)} /></label>
+            <label>入山時刻 <em className="source-badge yamareco">ヤマレコ</em><input inputMode="numeric" placeholder="7/11(土) 11:00" value={plan.entryTime} onChange={(event) => onUpdate("entryTime", event.target.value)} /></label>
+            <label>下山時刻 <em className="source-badge yamareco">ヤマレコ</em><input inputMode="numeric" placeholder="7/13(月) 16:00" value={plan.exitTime} onChange={(event) => onUpdate("exitTime", event.target.value)} /></label>
           </div>
         </section>
 
         <section className="editor-section" id="section-route">
-          <div className="section-title"><span>02</span><div><h2>日別ルート <em className="source-badge yamareco">ヤマレコ</em></h2><p>主要地点を1列で表示し、時刻は5分単位</p></div></div>
-          <label>日別行程<textarea aria-invalid={!plan.schedule.some(Boolean)} aria-required="true" value={listValue(plan.schedule)} onChange={(event) => onUpdate("schedule", toScheduleList(event.target.value))} /></label>
+          <div className="section-title"><span>02</span><div><h2>日別ルート <em className="source-badge yamareco">ヤマレコ</em></h2><p>主要地点を日ごとに整理し、時刻は5分単位</p></div></div>
+          <label className="schedule-field">日別行程 <span>起床・就寝時刻は手動入力</span><textarea aria-invalid={!plan.schedule.some(Boolean)} aria-required="true" value={listValue(plan.schedule)} onChange={(event) => onUpdate("schedule", toScheduleList(event.target.value))} /></label>
           <div className="editor-grid">
-            <label>コースタイム倍率<input value={plan.courseTimeMultiplier} onChange={(event) => onUpdate("courseTimeMultiplier", event.target.value)} /></label>
-            <label>日の入り時刻 <em className="source-badge yamareco">ヤマレコ</em><input value={plan.sunset} onChange={(event) => onUpdate("sunset", event.target.value)} /></label>
+            <label>コースタイム倍率 <em className="source-badge yamareco">ヤマレコ</em><input value={plan.courseTimeMultiplier} onChange={(event) => onUpdate("courseTimeMultiplier", event.target.value)} /></label>
+            <label>初日の日の入り時刻 <em className="source-badge yamareco">ヤマレコ</em><input value={plan.sunset} onChange={(event) => onUpdate("sunset", event.target.value)} /></label>
           </div>
+          {scheduleDayCount > 1 ? <label>日の出時刻 <em className="source-badge web">日の出時刻を検索</em><input value={plan.sunrise} onChange={(event) => onUpdate("sunrise", event.target.value)} /></label> : null}
+          <SourceLinks sources={plan.sources} prefixes={["日の出", "日の入り"]} />
         </section>
 
         <section className="editor-section" id="section-access">
           <div className="section-title"><span>03</span><div><h2>交通・宿泊</h2><p>新宿起点の交通と、宿泊施設の予約・料金・水場条件</p></div></div>
-          <label className={!plan.transport.trim() ? "manual-field" : ""}>交通機関 <em className="source-badge web">Web検索</em><textarea aria-invalid={!plan.transport.trim()} aria-required="true" value={plan.transport} onChange={(event) => onUpdate("transport", event.target.value)} /></label>
-          <label className={!plan.lodging.trim() ? "manual-field" : ""}>テント場・山小屋 <em className="source-badge web">公式サイト検索</em><textarea aria-invalid={!plan.lodging.trim()} aria-required="true" value={plan.lodging} onChange={(event) => onUpdate("lodging", event.target.value)} /></label>
+          <div className="field-title-row"><strong>交通機関 <em className="source-badge web">交通経路・運賃を検索</em></strong><a href="https://www.navitime.co.jp/transfer/" rel="noreferrer" target="_blank">NAVITIMEで確認<ExternalLink size={13} /></a></div>
+          <label className={!plan.transport.trim() ? "manual-field field-without-title" : "field-without-title"}><textarea aria-label="交通機関" aria-invalid={!plan.transport.trim()} aria-required="true" value={plan.transport} onChange={(event) => updateTransport(event.target.value)} /></label>
+          {budgetRecalculating ? <p className="inline-status"><LoaderCircle className="spin" size={14} />変更した交通経路から費用を再計算中</p> : null}
+          <SourceLinks sources={plan.sources} prefixes={["交通", "予算"]} />
+          <label className={!plan.lodging.trim() ? "manual-field" : ""}>テント場・山小屋 <em className="source-badge web">予約・料金・水場を検索</em><textarea aria-invalid={!plan.lodging.trim()} aria-required="true" value={plan.lodging} onChange={(event) => onUpdate("lodging", event.target.value)} /></label>
+          <a className="reference-tool-link" href="https://yamagoya-mirumiru.korokoro-dev.jp/" rel="noreferrer" target="_blank">山小屋みるみるで予約状況を確認<ExternalLink size={13} /></a>
+          <SourceLinks sources={[...plan.sources, ...plan.lodgingLinks.map((item) => ({ ...item, title: `宿泊：${item.title}` }))]} prefixes={["宿泊", "山小屋"]} />
           {plan.lodgingLinks.length > 0 ? <div className="lodging-links"><strong>宿泊施設の公式ページ</strong>{plan.lodgingLinks.map((item) => <a href={item.url} key={item.url} rel="noreferrer" target="_blank">{item.title}<ExternalLink size={14} /></a>)}</div> : <p className="manual-link-note">公式URLが取得できなかった場合は、施設名で公式サイトを確認してください。</p>}
           <label>バス時刻表 <em className="source-badge web">往路・復路を判定</em><span>鉄道は不要／利用するバスのみ</span><textarea value={listValue(plan.timetables)} onChange={(event) => onUpdate("timetables", toList(event.target.value))} /></label>
           <ScreenshotPicker
             files={timetableImages}
-            label="必要な時刻表のスクリーンショット"
+            label="必要なバス時刻表画像"
             multiple
             onFiles={(files) => setTimetableImages((current) => [...current, ...files])}
             onRemove={(index) => setTimetableImages((current) => current.filter((_, itemIndex) => itemIndex !== index))}
@@ -532,13 +587,14 @@ function ReviewView({
         </section>
 
         <section className="editor-section" id="section-budget">
-          <div className="section-title"><span>04</span><div><h2>予算・関係諸機関 <em className="source-badge web">Web検索</em></h2><p>新宿起点。JR片道101km以上は学割2割引き（10の位で切り捨て）</p></div></div>
+          <div className="section-title"><span>04</span><div><h2>予算・関係諸機関</h2><p>交通費・宿泊費・連絡先を公式情報から確認</p></div></div>
           <EditablePlanTable
             caption="予算"
             headers={["項目", "金額", "備考"]}
             rows={plan.budgetItems}
             onChange={(rows) => onUpdate("budgetItems", rows)}
           />
+          <SourceLinks sources={plan.sources} prefixes={["予算", "関係諸機関", "病院", "山小屋"]} />
           <EditablePlanTable
             caption="関係諸機関"
             headers={["項目", "名称", "連絡先"]}
@@ -549,43 +605,25 @@ function ReviewView({
         </section>
 
         <section className="editor-section" id="section-map">
-          <div className="section-title"><span>05</span><div><h2>概念図 <em className="source-badge yamareco">ヤマレコ</em></h2><p>ルート全体が見えるスクリーンショットをWordへ貼付</p></div></div>
+          <div className="section-title"><span>05</span><div><h2>概念図 <em className="source-badge yamareco">ヤマレコ</em></h2><p>ルート全体を画像で確認し、Wordへ貼付</p></div></div>
           {plan.routeMapUrl ? <a className="route-map-link" href={plan.routeMapUrl} rel="noreferrer" target="_blank">ヤマレコでルートを開いてスクリーンショットを撮る<ExternalLink size={15} /></a> : null}
           <ScreenshotPicker
             files={routeMapImage ? [routeMapImage] : []}
-            label="ルート全体のスクリーンショット"
+            label="ルート全体の概念図画像"
             onFiles={(files) => setRouteMapImage(files[0] ?? null)}
             onRemove={() => setRouteMapImage(null)}
           />
         </section>
       </article>
-      <aside className="sources-card">
-        <div className="word-card">
-          <div className="word-card-heading">
-            <FileText size={22} />
-            <div><strong>Word計画書を作成</strong><p>見本の5ページ書式をアプリに内蔵</p></div>
-          </div>
-          <div className="template-status"><CheckCircle2 size={18} /><span><strong>標準書式</strong><small>準備済み・選択操作は不要</small></span></div>
-          <p className="word-card-note">左側で修正した内容を、画面上部の「Wordプレビュー」で確認できます。</p>
-          <p className="word-privacy"><LockKeyhole size={14} />画像の合成とWord生成は、このブラウザ内で完結します。</p>
-        </div>
-        <div className="manual-card">
-          <LockKeyhole size={20} />
-          <div><strong>Wordへ人が追記</strong><p>水場情報／食糧／緊急時対策／装備／執筆者／メンバー・役割／連絡網</p></div>
-        </div>
-        <h2>参照元</h2>
-        <p>リンクを開き、最新情報と原文を必ず確認してください。</p>
-        <div>
-          {plan.sources.map((source) => (
-            <a href={source.url} key={`${source.title}-${source.url}`} rel="noreferrer" target="_blank">
-              <span>{source.title}</span><ExternalLink size={17} />
-            </a>
-          ))}
-        </div>
-      </aside>
       {previewDocument ? <WordPreview document={previewDocument} onClose={() => setPreviewDocument(null)} /> : null}
     </section>
   );
+}
+
+function SourceLinks({ sources, prefixes }: { sources: Source[]; prefixes: string[] }) {
+  const filtered = sources.filter((source) => prefixes.some((prefix) => source.title.startsWith(prefix)));
+  if (!filtered.length) return null;
+  return <div className="field-source-links"><span>参照元</span>{filtered.map((source) => <a href={source.url} key={`${source.title}-${source.url}`} rel="noreferrer" target="_blank">{source.title}<ExternalLink size={12} /></a>)}</div>;
 }
 
 function EditablePlanTable({

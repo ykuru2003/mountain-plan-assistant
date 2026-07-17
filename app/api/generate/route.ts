@@ -8,7 +8,7 @@ const PLAN_SCHEMA = {
   additionalProperties: false,
   required: [
     "title", "dates", "area", "purpose", "meeting", "dismissal", "entryPoint", "entryTime", "exitPoint", "exitTime",
-    "summary", "route", "schedule", "courseTimeMultiplier", "sunset", "weather", "risks",
+    "summary", "route", "schedule", "courseTimeMultiplier", "sunset", "sunrise", "weather", "risks",
     "transport", "lodging", "lodgingLinks", "waterSources", "foodPlan", "emergency", "emergencyEvacuation",
     "commonEquipment", "personalEquipment", "budgetItems", "relatedOrganizations",
     "conceptMap", "routeMapUrl", "timetables", "sources",
@@ -29,6 +29,7 @@ const PLAN_SCHEMA = {
     schedule: { type: "array", items: { type: "string" } },
     courseTimeMultiplier: { type: "string" },
     sunset: { type: "string" },
+    sunrise: { type: "string" },
     weather: { type: "string" },
     risks: { type: "array", items: { type: "string" } },
     transport: { type: "string" },
@@ -138,6 +139,14 @@ function scheduleDayHeading(dates: string, dayIndex: number) {
   return `＜${dayIndex + 1}日目 ${date.getUTCMonth() + 1}/${date.getUTCDate()}(${weekdays[date.getUTCDay()]})＞`;
 }
 
+function dayDateTime(dates: string, dayIndex: number, time: string) {
+  const match = dates.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/);
+  if (!match || !time) return time;
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]) + dayIndex));
+  const weekdays = ["日", "月", "火", "水", "木", "金", "土"];
+  return `${date.getUTCMonth() + 1}/${date.getUTCDate()}(${weekdays[date.getUTCDay()]}) ${time}`;
+}
+
 type ParsedPublicPlan = {
   dates: string;
   area: string;
@@ -149,6 +158,7 @@ type ParsedPublicPlan = {
   exitTime: string;
   lodging: string;
   firstPointId: string;
+  dayCount: number;
 };
 
 function parsePublicPlanHtml(html: string): ParsedPublicPlan {
@@ -160,6 +170,7 @@ function parsePublicPlanHtml(html: string): ParsedPublicPlan {
   const courseTimeMultiplier = stripHtml(html.match(/<div class="pace-num">[\s\S]*?<span[^>]*>([^<]+)<\/span>/i)?.[1] ?? "");
   const blockMatches = [...html.matchAll(/<div class="record-detail-content-time-block">/g)];
   const schedule: string[] = [];
+  const dailySchedules: string[][] = [];
   const allPoints: Array<{ time: string; name: string; pointId: string }> = [];
   const lodgingNames = new Set<string>();
 
@@ -192,9 +203,16 @@ function parsePublicPlanHtml(html: string): ParsedPublicPlan {
     for (const point of points) {
       if (/(?:ヒュッテ|山荘|山小屋|小屋|避難小屋|テント場|キャンプ場)$/.test(point.name)) lodgingNames.add(point.name);
     }
-    schedule.push(scheduleDayHeading(dates, blockIndex));
-    schedule.push(...major.map((point) => `${point.time} ${point.name}${point.hasWater ? " 💧" : ""}${point.hasToilet ? " 🚻" : ""}`));
+    dailySchedules.push(major.map((point) => `${point.time} ${point.name}${point.hasWater ? " 💧" : ""}${point.hasToilet ? " 🚻" : ""}`));
   }
+
+  dailySchedules.forEach((lines, dayIndex) => {
+    if (dayIndex > 0) schedule.push("");
+    schedule.push(scheduleDayHeading(dates, dayIndex));
+    if (dayIndex > 0) schedule.push("起床時刻：");
+    schedule.push(...lines);
+    if (dayIndex < dailySchedules.length - 1) schedule.push("就寝時刻：");
+  });
 
   return {
     dates,
@@ -202,32 +220,39 @@ function parsePublicPlanHtml(html: string): ParsedPublicPlan {
     schedule,
     courseTimeMultiplier,
     entryPoint: allPoints[0]?.name ?? "",
-    entryTime: allPoints[0]?.time ?? "",
+    entryTime: dayDateTime(dates, 0, allPoints[0]?.time ?? ""),
     exitPoint: allPoints.at(-1)?.name ?? "",
-    exitTime: allPoints.at(-1)?.time ?? "",
+    exitTime: dayDateTime(dates, Math.max(0, dailySchedules.length - 1), allPoints.at(-1)?.time ?? ""),
     lodging: [...lodgingNames].join("、"),
     firstPointId: allPoints.find((point) => point.pointId)?.pointId ?? "",
+    dayCount: dailySchedules.length,
   };
 }
 
-async function readSunsetTimes(pointId: string, dates: string) {
-  if (!pointId || !dates) return "";
+async function readSunTimes(pointId: string, dates: string, dayCount: number) {
+  if (!pointId || !dates) return { sunset: "", sunrise: "" };
   try {
     const response = await fetch(`https://www.yamareco.com/modules/yamainfo/ptinfo.php?ptid=${pointId}`, {
       headers: { "user-agent": "MountainPlanAssistant/1.0 (+public-plan-reader)" },
       signal: AbortSignal.timeout(8_000),
     });
-    if (!response.ok) return "";
+    if (!response.ok) return { sunset: "", sunrise: "" };
     const html = iconv.decode(Buffer.from(await response.arrayBuffer()), "euc-jp");
-    const targetDates = [...dates.matchAll(/(\d{1,2})月(\d{1,2})日/g)]
-      .map((match) => `${String(Number(match[1])).padStart(2, "0")}/${String(Number(match[2])).padStart(2, "0")}`);
-    const rows = [...html.matchAll(/<tr>[\s\S]*?<td>(\d{2}\/\d{2})[\s\S]*?<span class="txt_e fs-18">[^<]+<\/span>[\s\S]*?<span class="txt_e fs-18">([^<]+)<\/span>[\s\S]*?<\/tr>/gi)];
-    return rows
-      .filter((match) => targetDates.includes(match[1]))
-      .map((match) => `${match[1]} ${roundTimesToFiveMinutes(match[2])}`)
-      .join("、");
+    const first = dates.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/);
+    if (!first) return { sunset: "", sunrise: "" };
+    const targetDates = Array.from({ length: Math.max(1, dayCount) }, (_, index) => {
+      const date = new Date(Date.UTC(Number(first[1]), Number(first[2]) - 1, Number(first[3]) + index));
+      return `${String(date.getUTCMonth() + 1).padStart(2, "0")}/${String(date.getUTCDate()).padStart(2, "0")}`;
+    });
+    const rows = [...html.matchAll(/<tr>[\s\S]*?<td>(\d{2}\/\d{2})[\s\S]*?<span class="txt_e fs-18">([^<]+)<\/span>[\s\S]*?<span class="txt_e fs-18">([^<]+)<\/span>[\s\S]*?<\/tr>/gi)];
+    const firstDay = rows.find((match) => match[1] === targetDates[0]);
+    const nextMorning = dayCount > 1 ? rows.find((match) => match[1] === targetDates[1]) : undefined;
+    return {
+      sunset: firstDay ? roundTimesToFiveMinutes(firstDay[3]) : "",
+      sunrise: nextMorning ? roundTimesToFiveMinutes(nextMorning[2]) : "",
+    };
   } catch {
-    return "";
+    return { sunset: "", sunrise: "" };
   }
 }
 
@@ -238,9 +263,11 @@ async function readPublicPlanMeta(url: string) {
       redirect: "follow",
       signal: AbortSignal.timeout(12_000),
     });
-    if (!response.ok) return { title: null, routeMapUrl: "", parsed: null, sunset: "" };
+    if (!response.ok) return { title: null, routeMapUrl: "", parsed: null, sunset: "", sunrise: "", isPrivate: response.status === 401 || response.status === 403 };
     const bytes = Buffer.from(await response.arrayBuffer());
     const html = iconv.decode(bytes, "euc-jp");
+    const isPrivate = /(?:この(?:山行)?計画は非公開|この計画を閲覧できません|この計画は公開されていません|閲覧権限がありません)/.test(stripHtml(html));
+    if (isPrivate) return { title: null, routeMapUrl: "", parsed: null, sunset: "", sunrise: "", isPrivate: true };
     const rawTitle = html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1];
     const title = rawTitle ? decodeEntities(rawTitle)
       .replace(/\s*\[山行計画\]\s*-\s*ヤマレコ\s*$/i, "")
@@ -252,10 +279,10 @@ async function readPublicPlanMeta(url: string) {
       ? `https://www.yamareco.com/modules/yr_plan/showmap.php?plid=${planId}&mode=cyberjapan`
       : "";
     const parsed = parsePublicPlanHtml(html);
-    const sunset = await readSunsetTimes(parsed.firstPointId, parsed.dates);
-    return { title, routeMapUrl, parsed, sunset };
+    const sun = await readSunTimes(parsed.firstPointId, parsed.dates, parsed.dayCount);
+    return { title, routeMapUrl, parsed, ...sun, isPrivate: false };
   } catch {
-    return { title: null, routeMapUrl: "", parsed: null, sunset: "" };
+    return { title: null, routeMapUrl: "", parsed: null, sunset: "", sunrise: "", isPrivate: false };
   }
 }
 
@@ -266,6 +293,7 @@ function demoPlan(
   routeMapUrl = "",
   parsed: ParsedPublicPlan | null = null,
   sunset = "",
+  sunrise = "",
 ) {
   void notes;
   return {
@@ -284,6 +312,7 @@ function demoPlan(
     schedule: parsed?.schedule.length ? parsed.schedule : [],
     courseTimeMultiplier: parsed?.courseTimeMultiplier || "",
     sunset: sunset || "",
+    sunrise: sunrise || "",
     weather: "",
     risks: [],
     transport: "",
@@ -296,9 +325,9 @@ function demoPlan(
     commonEquipment: [],
     personalEquipment: [],
     budgetItems: [
-      "交通費｜｜鉄道（新宿から往復・学割適用後）",
+      "交通費｜｜鉄道（新宿から往復）",
       "交通費｜｜バス（駅から登山口まで往復）",
-      "テント場代｜｜", "温泉｜｜", "その他｜｜食費など", "合計｜｜",
+      "テント場代｜｜", "温泉｜｜", "その他｜｜食費など", "合計｜＋α｜",
     ],
     relatedOrganizations: [
       "現地連絡先｜｜", "顧問｜｜", "大学｜｜",
@@ -309,16 +338,14 @@ function demoPlan(
     routeMapUrl: routeMapUrl || url,
     timetables: [],
     sources: [
-      { title: "入力したヤマレコ", url },
-      { title: "気象庁 防災情報", url: "https://www.jma.go.jp/bosai/" },
-      { title: "国土地理院 地理院地図", url: "https://maps.gsi.go.jp/" },
+      { title: "ヤマレコ：入力した計画", url },
     ],
   };
 }
 
 function collectSources(payload: Record<string, unknown>, originalUrl: string): Source[] {
   const sources = new Map<string, Source>();
-  sources.set(originalUrl, { title: "入力したヤマレコ", url: originalUrl });
+  sources.set(originalUrl, { title: "ヤマレコ：入力した計画", url: originalUrl });
   const output = Array.isArray(payload.output) ? payload.output : [];
   for (const item of output) {
     if (!item || typeof item !== "object") continue;
@@ -328,7 +355,7 @@ function collectSources(payload: Record<string, unknown>, originalUrl: string): 
     for (const source of actionSources) {
       if (!source || typeof source !== "object") continue;
       const candidate = source as Record<string, unknown>;
-      if (typeof candidate.url === "string") sources.set(candidate.url, { title: "Web検索結果", url: candidate.url });
+      if (typeof candidate.url === "string") sources.set(candidate.url, { title: "交通・宿泊・予算の確認", url: candidate.url });
     }
     const content = Array.isArray(record.content) ? record.content : [];
     for (const block of content) {
@@ -345,6 +372,47 @@ function collectSources(payload: Record<string, unknown>, originalUrl: string): 
   return [...sources.values()];
 }
 
+function normalizeScheduleForManualTimes(values: string[]) {
+  const groups: string[][] = [];
+  for (const raw of values) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (/^＜\d+日目/.test(line)) groups.push([line]);
+    else if (groups.length) groups.at(-1)?.push(line);
+  }
+  return groups.flatMap((group, index) => {
+    const content = group.slice(1).filter((line) => !/^(?:起床|就寝)時刻\s*[:：]/.test(line));
+    return [
+      ...(index > 0 ? [""] : []),
+      group[0],
+      ...(index > 0 ? ["起床時刻："] : []),
+      ...content,
+      ...(index < groups.length - 1 ? ["就寝時刻："] : []),
+    ];
+  });
+}
+
+function normalizeBudgetItems(values: string[]) {
+  return values.slice(0, 6).map((value, index) => {
+    const [item = "", rawAmount = "", rawNote = ""] = value.split(/[｜|]/).map((part) => part.trim());
+    let amount = /^(?:0|0円|¥0|￥0)$/.test(rawAmount) ? "" : rawAmount;
+    const note = rawNote.replace(/1人分概算/g, "").trim();
+    if (/タクシー/.test(`${item}${note}`)) amount = "未定";
+    if (index === 5 && amount && !/[+＋]α$/.test(amount)) amount = `${amount}＋α`;
+    if (index === 5 && !amount) amount = "＋α";
+    return `${item}｜${amount}｜${note}`;
+  });
+}
+
+function normalizeOrganizationContacts(values: string[]) {
+  return values.map((value) => {
+    const [item = "", name = "", rawContact = ""] = value.split(/[｜|]/).map((part) => part.trim());
+    const contact = rawContact && /\d/.test(rawContact)
+      ? `TEL: ${rawContact.replace(/^TEL\s*[:：]\s*/i, "")}` : rawContact;
+    return `${item}｜${name}｜${contact}`;
+  });
+}
+
 export async function POST(request: Request) {
   const requestStartedAt = Date.now();
   const body = await request.json().catch(() => null) as { url?: string; notes?: string } | null;
@@ -358,6 +426,9 @@ export async function POST(request: Request) {
   const apiKey = process.env.OPENAI_API_KEY;
   const publicMeta = await readPublicPlanMeta(url);
   const yamarecoCompletedAt = Date.now();
+  if (publicMeta.isPrivate) {
+    return NextResponse.json({ error: "このヤマレコURLは非公開設定のため読み取れません。公開範囲を変更してから再度お試しください。" }, { status: 403 });
+  }
   const publicTitle = publicMeta.title;
   if (!apiKey) {
     console.info("[YAMARECO TO WORD] generation timing", {
@@ -366,7 +437,7 @@ export async function POST(request: Request) {
       totalMs: Date.now() - requestStartedAt,
     });
     return NextResponse.json({
-      plan: demoPlan(url, notes, publicTitle, publicMeta.routeMapUrl, publicMeta.parsed, publicMeta.sunset),
+      plan: demoPlan(url, notes, publicTitle, publicMeta.routeMapUrl, publicMeta.parsed, publicMeta.sunset, publicMeta.sunrise),
       demoMode: true,
       warning: publicTitle
         ? `公開ページ「${publicTitle}」を読み込みました。Web検索は未設定のため、交通・宿泊の詳細を確認してください。`
@@ -375,6 +446,20 @@ export async function POST(request: Request) {
   }
 
   const prompt = `あなたは大学ワンダーフォーゲル部の泊まり山行計画書を作るアシスタントです。次の公開ヤマレコURLを開き、指定どおり整理してください。\n\nURL: ${url}\n取得済みページ名: ${publicTitle || "取得できず"}\n取得済みルート地図URL: ${publicMeta.routeMapUrl || "取得できず"}\n取得済み日の入り: ${publicMeta.sunset || "取得できず（Web検索で補完すること）"}\n補足メモ: ${notes || "なし"}\n\nヤマレコから転記する項目:\n- 日程、山域、目的、入山地点、入山時刻、下山地点、下山時刻はヤマレコの記載だけを使う。\n- meetingとdismissalは手動記入欄なので必ず空文字にする。\n- scheduleは各日の先頭に「＜1日目 7/11(土)＞」形式の見出しを1項目入れ、その後は1地点につき1項目を「時刻 地点」の形式にする。矢印は付けない。\n- 地点は次の主要地点だけを残す: ①水場またはトイレがある地点、②山頂または小屋。登山口・下山口は各日の始点・終点として残してよい。それ以外の分岐・峠・通過点は省く。\n- 各地点に水場があれば末尾に「💧」、トイレがあれば末尾に「🚻」を付ける。両方あれば「💧 🚻」の順に付ける。\n- schedule、entryTime、exitTimeの時刻はすべて5分単位に四捨五入する。\n- courseTimeMultiplierはヤマレコに表示された倍率を転記する。推測しない。\n- sunsetはヤマレコから取得済みならその値を使う。取得できていなければ、対象日と山域に対応する日の入り時刻を信頼できるWeb情報から検索して補完する。sunsetには時刻だけを記載し、参照元名やURLは付けない。\n- lodgingはヤマレコ記載のテント場・山小屋を起点にする。\n- routeMapUrlは取得済みルート地図URLを使い、conceptMapは「ヤマレコのルート全体のスクリーンショット」とする。\n\nWeb検索で補完する項目:\n- transportは新宿駅から登山口までの往復として、公式情報で調べる。\n- timetablesは実際に利用するバスだけを対象にする。鉄道の時刻表は入れない。往路で使うバスは「往路｜路線・区間｜公式時刻表URL」、復路で使うバスは「復路｜路線・区間｜公式時刻表URL」とし、利用しない方向は入れない。\n- budgetItemsは内蔵Wordと同じ6行（交通費［鉄道］、交通費［バス］、テント場代、温泉、その他、合計）を「項目｜金額｜備考」で返す。JRの片道営業キロが101km以上なら普通運賃を2割引きし、10の位で切り捨て、「学割適用」と明記する。\n- lodgingには各テント場・山小屋について、予約要否、料金、水場が有料か無料か、煮沸が必要かを公式情報で記載する。lodgingLinksには宿泊地名をtitle、必ず公式URLをurlとして入れる。\n- relatedOrganizationsは内蔵Wordと同じ15行を「項目｜名称｜連絡先」で返す。項目と順序は、現地連絡先、顧問、大学、コーチ6行、主将、バス、タクシー、警察、山小屋、病院。個人情報が必要な現地連絡先・顧問・コーチ・主将は名称と連絡先を空欄にする。\n\n記載しない項目:\n- summaryとrouteとweatherとmeetingとdismissalとemergencyとemergencyEvacuationは空文字。\n- risks、waterSources、foodPlan、commonEquipment、personalEquipmentは空配列。これらはWord上で人が手動記入する。\n\n制約:\n- 個人情報は生成しない。氏名、個人の電話番号・メールアドレスを推測しない。\n- 公式機関、交通事業者、自治体、山小屋など一次情報を優先する。\n- 日付依存情報には対象日または確認日を明記する。\n- sourcesには実際に参照したURLと分かりやすいタイトルを入れる。\n- 手動記入が必要な内容に「要確認」「追記してください」などの案内文を入れず、空欄にする。\n- 日本語で簡潔に記載する。`;
+  const refinedPrompt = `${prompt}\n\n追加の優先要件（上の指示と競合する場合はこちらを優先）:
+- purposeは手動入力欄なので必ず空文字にする。ヤマレコから目的を転記しない。
+- entryTimeとexitTimeは「7/11(土) 11:00」形式で、月日・曜日・時刻を記載する。
+- 複数日のscheduleは日見出しの直前に空文字の項目を1つ入れる。初日を除く各日の見出し直後に「起床時刻：」、最終日を除く各日の末尾に「就寝時刻：」を入れ、時刻部分は空欄にして手動入力とする。
+- sunsetは初日分だけを時刻のみで返す。1泊以上の場合はsunriseに2日目の日の出時刻を時刻のみで返す。日帰りの場合sunriseは空文字。
+- transportは必ず「往路：」と「復路：」を別の行にする。
+- transportは各方向を1〜2行に要約し、「往路：経路（料金）」「復路：経路（料金）」程度の簡潔さにする。
+- lodgingは施設ごとに「予約：必須／不要／不可（短い備考）」「水：飲用可能／不可（有料・ペットボトル持参等）」「料金：金額」の3項目だけで簡潔にまとめる。予約可否は https://yamagoya-mirumiru.korokoro-dev.jp/ も参照する。
+- conceptMapには説明文を書かず空文字にする。timetablesには必要なバス時刻表の公式URLだけを方向別に返し、Word本文用の説明文は作らない。
+- budgetItemsで0円の金額は空欄にする。合計金額の末尾には必ず「＋α」を付ける。「1人分概算」という文言は入れない。学割を適用した行の備考には「学割適用」と明記する。タクシー代を人数で割る必要がある場合は金額を「未定」にする。
+- relatedOrganizationsは必要な同種機関が複数あれば15行を超えて行を追加する。電話番号は必ず「TEL: 」から始める。
+- relatedOrganizationsの山小屋には宿泊利用する小屋だけでなく、ルート周辺で緊急時に連絡・避難する可能性がある全ての山小屋を入れる。各山小屋の公式URLはsourcesへ「山小屋：施設名」のタイトルで追加する。
+- 病院は入山地点と下山地点から緊急搬送先になり得る医療機関を調べ、必要なら複数行にする。
+- sources.titleは「交通：路線名」「宿泊：施設名」「予算：項目」「日の出：地点」のように、どの計画書項目を調べた情報か分かる名前にする。「Web検索結果」というタイトルは禁止。`;
 
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
@@ -384,7 +469,7 @@ export async function POST(request: Request) {
       store: false,
       tools: [{ type: "web_search" }],
       include: ["web_search_call.action.sources"],
-      input: prompt,
+      input: refinedPrompt,
       text: { format: { type: "json_schema", name: "mountain_plan", strict: true, schema: PLAN_SCHEMA } },
     }),
   });
@@ -419,7 +504,10 @@ export async function POST(request: Request) {
     plan.schedule = publicMeta.parsed.schedule.length ? publicMeta.parsed.schedule : plan.schedule;
   }
   plan.sunset = publicMeta.sunset || plan.sunset;
+  plan.sunrise = publicMeta.sunrise || plan.sunrise;
+  plan.schedule = normalizeScheduleForManualTimes(plan.schedule);
   plan.title = buildPlanTitle(plan.dates, publicTitle || plan.title);
+  plan.purpose = "";
   plan.summary = "";
   plan.route = "";
   plan.weather = "";
@@ -432,10 +520,17 @@ export async function POST(request: Request) {
   plan.emergencyEvacuation = "";
   plan.commonEquipment = [];
   plan.personalEquipment = [];
+  plan.transport = plan.transport.replace(/\s*(復路\s*[:：])/g, "\n$1").trim();
+  plan.budgetItems = normalizeBudgetItems(plan.budgetItems);
+  plan.relatedOrganizations = normalizeOrganizationContacts(plan.relatedOrganizations);
+  plan.conceptMap = "";
   const gatheredSources = collectSources(payload, url);
   const sources = new Map<string, Source>();
-  for (const source of [...plan.sources, ...plan.lodgingLinks, ...gatheredSources]) {
+  for (const source of [...plan.sources, ...plan.lodgingLinks]) {
     try { new URL(source.url); sources.set(source.url, source); } catch { /* ignore invalid source URLs */ }
+  }
+  for (const source of gatheredSources) {
+    try { new URL(source.url); if (!sources.has(source.url)) sources.set(source.url, source); } catch { /* ignore invalid source URLs */ }
   }
   console.info("[YAMARECO TO WORD] generation timing", {
     mode: "yamareco-and-web",

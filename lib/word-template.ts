@@ -28,6 +28,7 @@ export type WordPlan = {
   schedule: string[];
   courseTimeMultiplier: string;
   sunset: string;
+  sunrise: string;
   weather: string;
   risks: string[];
   transport: string;
@@ -111,6 +112,108 @@ function setCell(document: Document, table: number, row: number, cell: number, v
   clearCell(target);
   const lines = Array.isArray(value) ? value : value.split("\n");
   for (const line of lines.length ? lines : [""]) appendParagraph(document, target, line);
+}
+
+function setCellHyperlink(document: Document, relations: Document, table: number, row: number, cell: number, label: string, url: string) {
+  const target = getCell(document, table, row, cell);
+  clearCell(target);
+  const paragraph = appendParagraph(document, target, "");
+  appendHyperlink(document, paragraph, label, addExternalRelationship(relations, url));
+}
+
+function splitScheduleDays(lines: string[]) {
+  const groups: string[][] = [];
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (/^＜\d+日目/.test(line)) groups.push([line]);
+    else if (groups.length) groups.at(-1)?.push(line);
+  }
+  return groups.length ? groups : [lines.filter(Boolean)];
+}
+
+function appendScheduleParagraph(document: Document, cell: Element, text: string) {
+  const paragraph = appendParagraph(document, cell, /^(?:＜|起床時刻|就寝時刻)/.test(text) ? text : text, /^＜/.test(text));
+  if (/^(?:起床|就寝)時刻\s*[:：]/.test(text)) {
+    const run = paragraph.getElementsByTagName("w:r").item(0);
+    if (run) {
+      let properties = run.getElementsByTagName("w:rPr").item(0);
+      if (!properties) {
+        properties = wordElement(document, "rPr");
+        run.insertBefore(properties, run.firstChild);
+      }
+      const highlight = wordElement(document, "highlight");
+      highlight.setAttributeNS(WORD_NS, "w:val", "yellow");
+      properties.appendChild(highlight);
+    }
+  }
+}
+
+function setScheduleColumns(document: Document, lines: string[]) {
+  const target = getCell(document, 0, 5, 1);
+  clearCell(target);
+  const groups = splitScheduleDays(lines);
+  if (groups.length <= 1) {
+    for (const line of groups[0] ?? []) appendScheduleParagraph(document, target, line);
+    return;
+  }
+
+  const table = wordElement(document, "tbl");
+  const tableProperties = wordElement(document, "tblPr");
+  const tableWidth = wordElement(document, "tblW");
+  tableWidth.setAttributeNS(WORD_NS, "w:w", "5400");
+  tableWidth.setAttributeNS(WORD_NS, "w:type", "dxa");
+  tableProperties.appendChild(tableWidth);
+  const layout = wordElement(document, "tblLayout");
+  layout.setAttributeNS(WORD_NS, "w:type", "fixed");
+  tableProperties.appendChild(layout);
+  const borders = wordElement(document, "tblBorders");
+  const insideVertical = wordElement(document, "insideV");
+  insideVertical.setAttributeNS(WORD_NS, "w:val", "single");
+  insideVertical.setAttributeNS(WORD_NS, "w:sz", "6");
+  insideVertical.setAttributeNS(WORD_NS, "w:color", "B7B7B7");
+  borders.appendChild(insideVertical);
+  tableProperties.appendChild(borders);
+  table.appendChild(tableProperties);
+  const grid = wordElement(document, "tblGrid");
+  for (let index = 0; index < 2; index += 1) {
+    const column = wordElement(document, "gridCol");
+    column.setAttributeNS(WORD_NS, "w:w", "2700");
+    grid.appendChild(column);
+  }
+  table.appendChild(grid);
+
+  for (let rowIndex = 0; rowIndex < Math.ceil(groups.length / 2); rowIndex += 1) {
+    const row = wordElement(document, "tr");
+    for (let columnIndex = 0; columnIndex < 2; columnIndex += 1) {
+      const cell = wordElement(document, "tc");
+      const properties = wordElement(document, "tcPr");
+      const width = wordElement(document, "tcW");
+      width.setAttributeNS(WORD_NS, "w:w", "2700");
+      width.setAttributeNS(WORD_NS, "w:type", "dxa");
+      properties.appendChild(width);
+      cell.appendChild(properties);
+      const group = groups[rowIndex * 2 + columnIndex] ?? [];
+      for (const line of group) appendScheduleParagraph(document, cell, line);
+      if (!group.length) appendParagraph(document, cell, "");
+      row.appendChild(cell);
+    }
+    table.appendChild(row);
+  }
+  target.appendChild(table);
+  appendParagraph(document, target, "");
+}
+
+function ensureTableRows(document: Document, tableIndex: number, desiredDataRows: number) {
+  const table = document.getElementsByTagName("w:tbl").item(tableIndex);
+  if (!table) return;
+  let rows = Array.from(table.childNodes).filter((node) => node.nodeName === "w:tr") as Element[];
+  while (rows.length < desiredDataRows + 1) {
+    const templateRow = rows.at(-1);
+    if (!templateRow) break;
+    table.appendChild(templateRow.cloneNode(true));
+    rows = Array.from(table.childNodes).filter((node) => node.nodeName === "w:tr") as Element[];
+  }
 }
 
 function splitColumns(value: string) {
@@ -264,33 +367,45 @@ export function fillWordTemplate(
   setCell(document, 0, 3, 4, cleanManualMarker(plan.dismissal));
   setCell(document, 0, 4, 1, [plan.entryPoint, plan.entryTime && `入山時刻：${plan.entryTime}`].filter(Boolean));
   setCell(document, 0, 4, 4, [plan.exitPoint, plan.exitTime && `下山時刻：${plan.exitTime}`].filter(Boolean));
-  setCell(document, 0, 5, 1, plan.schedule);
-
   const notesCell = getCell(document, 0, 7, 1);
   clearCell(notesCell);
   const notes = [
     plan.courseTimeMultiplier && `コースタイム倍率：${plan.courseTimeMultiplier}`,
-    plan.sunset && `日没：${plan.sunset}`,
-    cleanManualMarker(plan.transport) && `交通：${cleanManualMarker(plan.transport)}`,
-    plan.timetables.length && `時刻表：${plan.timetables.join("／")}`,
+    plan.sunset && `初日の日の入り：${plan.sunset}`,
+    plan.sunrise && `日の出：${plan.sunrise}`,
   ].filter(Boolean) as string[];
   for (const line of notes) appendParagraph(document, notesCell, line);
+  const transportLines = cleanManualMarker(plan.transport).split("\n").map((line) => line.trim()).filter(Boolean);
+  transportLines.forEach((line, index) => appendParagraph(document, notesCell, `${index === 0 ? "交通：" : ""}${line}`));
   for (const link of plan.lodgingLinks.filter((item) => /^https:\/\//.test(item.url))) {
     const paragraph = appendParagraph(document, notesCell, "宿泊地URL：");
     appendHyperlink(document, paragraph, link.title, addExternalRelationship(relations, link.url));
   }
   for (let index = 0; index < 6; index += 1) {
-    const [item = "", amount = "", note = ""] = splitColumns(plan.budgetItems[index] ?? "");
+    const [item = "", rawAmount = "", rawNote = ""] = splitColumns(plan.budgetItems[index] ?? "");
+    let amount = /^(?:0|0円|¥0|￥0)$/.test(rawAmount) ? "" : rawAmount;
+    const note = rawNote.replace(/1人分概算/g, "").trim();
+    if (/タクシー/.test(`${item}${note}`)) amount = "未定";
+    if (index === 5 && amount && !/[+＋]α$/.test(amount)) amount = `${amount}＋α`;
+    if (index === 5 && !amount) amount = "＋α";
     setCell(document, 5, index + 1, 1, item);
     setCell(document, 5, index + 1, 2, amount);
     setCell(document, 5, index + 1, 3, note);
   }
 
-  for (let index = 0; index < 15; index += 1) {
-    const [, name = "", contact = ""] = splitColumns(plan.relatedOrganizations[index] ?? "");
-    setCell(document, 6, index + 1, 2, name);
+  ensureTableRows(document, 6, Math.max(15, plan.relatedOrganizations.length));
+  for (let index = 0; index < Math.max(15, plan.relatedOrganizations.length); index += 1) {
+    const [item = "", name = "", rawContact = ""] = splitColumns(plan.relatedOrganizations[index] ?? "");
+    const contact = rawContact && /\d/.test(rawContact)
+      ? `TEL: ${rawContact.replace(/^TEL\s*[:：]\s*/i, "")}` : rawContact;
+    if (item) setCell(document, 6, index + 1, 1, item);
+    const hutLink = item === "山小屋" ? [...plan.lodgingLinks, ...plan.sources].find((link) => link.title.includes(name) && /^https:\/\//.test(link.url)) : undefined;
+    if (name && hutLink) setCellHyperlink(document, relations, 6, index + 1, 2, name, hutLink.url);
+    else setCell(document, 6, index + 1, 2, name);
     setCell(document, 6, index + 1, 3, contact);
   }
+
+  setScheduleColumns(document, plan.schedule);
 
   appendImagesAfterBodyParagraph(zip, document, relations, "〈概念図〉", images.routeMap ? [images.routeMap] : [], "route-map");
   appendImagesAfterBodyParagraph(zip, document, relations, "〈時刻表など〉", images.timetables ?? [], "timetable");

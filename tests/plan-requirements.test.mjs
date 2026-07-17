@@ -97,7 +97,7 @@ test("returns every public-information section required by the Word sample", asy
   const { plan } = await response.json();
   const stringFields = [
     "title", "dates", "area", "purpose", "meeting", "dismissal", "entryPoint", "entryTime",
-    "exitPoint", "exitTime", "summary", "route", "courseTimeMultiplier", "sunset", "weather",
+    "exitPoint", "exitTime", "summary", "route", "courseTimeMultiplier", "sunset", "sunrise", "weather",
     "transport", "lodging", "emergency", "emergencyEvacuation", "conceptMap", "routeMapUrl",
   ];
   const arrayFields = [
@@ -121,7 +121,7 @@ test("returns every public-information section required by the Word sample", asy
   assert.equal(plan.title, "20260718-19 パノラマ銀座 計画書");
   assert.equal(plan.dates, "2026年07月18日(土) ～ 2026年07月19日(日)");
   assert.equal(plan.area, "妙高・戸隠・雨飾");
-  assert.ok(plan.schedule.every((line) => /^＜\d+日目 \d+\/\d+\([日月火水木金土]\)＞$/.test(line) || /^\d{2}:\d{2} \S/.test(line)));
+  assert.ok(plan.schedule.every((line) => !line || /^＜\d+日目 \d+\/\d+\([日月火水木金土]\)＞$/.test(line) || /^(?:起床|就寝)時刻：$/.test(line) || /^\d{2}:\d{2} \S/.test(line)));
   assert.equal(plan.schedule[0], "＜1日目 7/18(土)＞");
   assert.ok(plan.schedule.includes("＜2日目 7/19(日)＞"));
   assert.ok(plan.schedule.includes("11:00 笹ケ峰登山口 🚻"));
@@ -129,12 +129,16 @@ test("returns every public-information section required by the Word sample", asy
   assert.ok(plan.schedule.includes("06:35 妙高山北峰"));
   assert.ok(plan.schedule.includes("12:35 火打山"));
   assert.ok(plan.schedule.includes("16:55 笹ケ峰登山口"));
-  assert.equal(plan.entryTime, "11:00");
-  assert.equal(plan.exitTime, "16:55");
+  assert.ok(plan.schedule.includes("起床時刻："));
+  assert.ok(plan.schedule.includes("就寝時刻："));
+  assert.equal(plan.entryTime, "7/18(土) 11:00");
+  assert.equal(plan.exitTime, "7/19(日) 16:55");
+  assert.equal(plan.purpose, "");
   assert.equal(plan.budgetItems.length, 6);
   assert.equal(plan.relatedOrganizations.length, 15);
   assert.equal(plan.relatedOrganizations[0], "現地連絡先｜｜");
   assert.equal(plan.relatedOrganizations.at(-1), "病院｜｜");
+  assert.match(plan.budgetItems.at(-1), /＋α/);
   assert.ok(
     plan.routeMapUrl === yamarecoUrl || /showmap\.php\?plid=\d+/.test(plan.routeMapUrl),
     "route map falls back to the public plan when Yamareco blocks metadata fetch",
@@ -145,4 +149,7 @@ test("falls back to web search instructions when Yamareco has no sunset", async 
   const route = await import("node:fs/promises").then(({ readFile }) => readFile(new URL("../app/api/generate/route.ts", import.meta.url), "utf8"));
   assert.match(route, /取得できず（Web検索で補完すること）/);
   assert.match(route, /取得できていなければ、対象日と山域に対応する日の入り時刻/);
+  assert.match(route, /非公開設定のため読み取れません/);
+  assert.match(route, /yamagoya-mirumiru\.korokoro-dev\.jp/);
+  assert.match(route, /緊急時に連絡・避難する可能性がある全ての山小屋/);
 });
