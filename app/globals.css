@@ -27,7 +27,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .app-shell { min-height: 100vh; background: radial-gradient(circle at 84% -8%, rgba(45,111,181,.18) 0, transparent 34rem), linear-gradient(180deg,#f8fafc 0,#edf3f8 100%); }
 .topbar { height: 86px; padding: 0 clamp(22px,4vw,64px); display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(197,164,109,.55); background: rgba(5,24,50,.97); backdrop-filter: blur(18px); position: sticky; top: 0; z-index: 20; box-shadow: 0 8px 30px rgba(3,17,37,.16); }
 .brand { display: flex; align-items: center; gap: 14px; color: white; text-decoration: none; font-size: clamp(20px,2vw,26px); font-weight: 750; letter-spacing: .01em; }
-.brand-mark { width: 46px; height: 46px; display: grid; place-items: center; color: white; background: linear-gradient(145deg,#2f7bc2,#0b3f7c); border: 1px solid rgba(255,255,255,.24); border-radius: 14px; box-shadow: inset 0 1px 0 rgba(255,255,255,.22),0 8px 22px rgba(0,0,0,.22); }
+.brand-mark { width: 46px; height: 46px; display: grid; place-items: center; color: #d9ebfb; background: rgba(255,255,255,.06); border: 1px solid rgba(139,187,230,.42); border-radius: 50%; box-shadow: inset 0 1px 0 rgba(255,255,255,.12),0 8px 20px rgba(0,0,0,.18); }
 .brand-copy { display: flex; flex-direction: column; line-height: 1; }
 .brand-copy strong { font-size: 22px; letter-spacing: .04em; }
 .brand-copy small { margin-top: 6px; color: #9db7d3; font-size: 9px; font-weight: 800; letter-spacing: .26em; }
@@ -49,9 +49,18 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 h1 { font-size: clamp(34px,4vw,54px); line-height: 1.13; margin: 16px 0 13px; letter-spacing: -.035em; }
 h1 span { color: var(--blue-dark); letter-spacing: -.045em; }
 .lead { margin: 0 0 30px; color: var(--muted); line-height: 1.7; }
-.feature-row { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; margin: -10px 0 28px; }
-.feature-row span { min-height: 62px; padding: 12px 14px; display: flex; align-items: center; gap: 9px; border: 1px solid #d0deeb; border-radius: 12px; color: #365b80; background: #f7faff; font-size: 12px; }
-.feature-row svg { flex: 0 0 auto; color: var(--blue); }
+.creation-flow { display: grid; grid-template-columns: minmax(0,1.3fr) 34px minmax(0,1fr) 34px minmax(0,1fr); align-items: stretch; margin: -8px 0 30px; }
+.flow-card { min-width: 0; min-height: 86px; padding: 15px 16px; display: flex; flex-direction: column; justify-content: center; gap: 10px; border: 1px solid #c9d9e8; border-radius: 14px; color: #244b73; background: linear-gradient(145deg,#fbfdff,#f1f7fc); box-shadow: 0 7px 18px rgba(24,74,123,.07); }
+.flow-card small { color: #7190ac; font-size: 9px; font-weight: 850; letter-spacing: .16em; }
+.flow-card strong { display: flex; align-items: center; gap: 9px; font-size: 13px; letter-spacing: .01em; }
+.flow-card svg { flex: 0 0 auto; color: var(--blue); }
+.source-pills { display: flex; flex-wrap: wrap; gap: 7px; }
+.source-pills span { min-height: 30px; padding: 5px 9px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid #c6d8e9; border-radius: 999px; color: #315c84; background: white; font-size: 10px; font-weight: 850; letter-spacing: .04em; }
+.flow-arrow { display: grid; place-items: center; color: #7a9ab7; position: relative; }
+.flow-arrow::before { content: ""; position: absolute; left: 3px; right: 3px; height: 1px; background: #c6d8e8; }
+.flow-arrow svg { position: relative; padding: 3px; border-radius: 50%; background: #fffef9; }
+.flow-output { border-color: #2e68a4; color: white; background: linear-gradient(140deg,#143f70,#1a65aa); box-shadow: 0 10px 24px rgba(16,67,115,.18); }
+.flow-output small, .flow-output svg { color: #bcd9f4; }
 label { display: block; font-weight: 700; margin-bottom: 10px; }
 label span { color: var(--muted); font-size: 13px; font-weight: 500; }
 .url-row { display: flex; gap: 14px; }
@@ -327,8 +336,10 @@ textarea:focus { border-color: var(--blue); }
   .step-number { width: 34px; height: 34px; }
   .privacy-note { align-items: flex-start; line-height: 1.5; }
   .input-card, .preview-card { padding: 22px 18px; }
-  .feature-row { grid-template-columns: 1fr; gap: 7px; }
-  .feature-row span { min-height: 48px; }
+  .creation-flow { grid-template-columns: 1fr; gap: 0; }
+  .flow-card { min-height: 76px; }
+  .flow-arrow { height: 32px; transform: rotate(90deg); }
+  .flow-arrow::before { left: calc(50% - 14px); right: calc(50% - 14px); }
   .generation-stage-list { grid-template-columns: 1fr; }
   .url-row { flex-direction: column; }
   .outline-button { width: 100%; }
