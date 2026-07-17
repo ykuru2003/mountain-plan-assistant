@@ -152,4 +152,9 @@ test("falls back to web search instructions when Yamareco has no sunset", async 
   assert.match(route, /非公開設定のため読み取れません/);
   assert.match(route, /yamagoya-mirumiru\.korokoro-dev\.jp/);
   assert.match(route, /緊急時に連絡・避難する可能性がある全ての山小屋/);
+  assert.match(route, /取得済みヤマレコ行動予定/);
+  assert.match(route, /全経由地点から日程、山域、入下山地点/);
+  assert.match(route, /これらを調べるためのWeb検索は禁止/);
+  assert.match(route, /同じ経由地点や施設を項目ごとに繰り返し検索しない/);
+  assert.match(route, /ヤマレコURL自体を検索エンジンで再検索しない/);
 });
