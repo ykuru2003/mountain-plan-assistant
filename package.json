@@ -1,5 +1,5 @@
 {
-  "name": "mountain-plan-assistant",
+  "name": "yamareco-to-word",
   "version": "0.1.0",
   "private": true,
   "engines": {
@@ -8,10 +8,10 @@
   "scripts": {
     "install:ci": "bash scripts/install-ci.sh",
     "dev": "vite",
-    "build": "bash scripts/build-verified.sh",
+    "build": "node scripts/build-verified.mjs",
     "start": "vinext start",
     "test": "npm run build && node --test tests/*.test.mjs",
-    "validate:artifact": "bash scripts/validate-artifact.sh",
+    "validate:artifact": "node scripts/validate-artifact.mjs",
     "lint": "bash scripts/sites-env.sh -- eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "bash scripts/sites-env.sh -- drizzle-kit generate"
   },
@@ -45,5 +45,5 @@
     "wrangler": "4.92.0"
   },
   "type": "module",
-  "displayName": "登山計画書アシスタント"
+  "displayName": "ヤマレコ TO WORD"
 }

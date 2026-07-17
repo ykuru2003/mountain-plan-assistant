@@ -72,6 +72,8 @@ label span { color: var(--muted); font-size: 13px; font-weight: 500; }
 .input-wrap.invalid { border-color: var(--danger); background: #fff9fa; box-shadow: 0 0 0 3px rgba(178,66,78,.08); }
 .input-wrap .valid-icon { color: #69a91e; }
 .input-wrap .invalid-icon { color: var(--danger); }
+.clear-url-button { border: 0; background: transparent; cursor: pointer; padding: 4px; display: flex; align-items: center; justify-content: center; transition: transform .18s, opacity .18s; }
+.clear-url-button:hover { transform: scale(1.15); opacity: 0.8; }
 .outline-button, .primary-small, .text-button { min-height: 48px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 0 19px; border: 1px solid var(--blue); border-radius: 10px; background: white; color: var(--blue); font-weight: 700; cursor: pointer; transition: .18s ease-out; }
 .outline-button:hover { background: var(--blue-pale); }
 .helper { margin: 8px 2px 26px; color: var(--muted); font-size: 13px; line-height: 1.5; }
@@ -317,6 +319,10 @@ textarea:focus { border-color: var(--blue); }
 .route-map-link { min-height: 50px; margin: 0 0 12px; padding: 0 16px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 1px solid #a9c3dc; border-radius: 12px; color: var(--blue-dark); background: #eef5fb; text-decoration: none; font-size: 13px; font-weight: 750; }
 .route-map-link:hover { border-color: var(--blue); background: #e2effa; }
 .notice { border-color: #d5c49d; border-radius: 12px; background: #fbf7ed; }
+.app-footer { margin-top: 80px; padding: 64px clamp(22px,4vw,64px); border-top: 1px solid #d4dfe9; background: linear-gradient(135deg,#0f2744 0%,#143f70 50%,#0d2d55 100%); color: white; display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 48px; }
+.app-footer div { display: flex; flex-direction: column; gap: 10px; }
+.app-footer strong { font-size: 16px; font-weight: 800; letter-spacing: .02em; display: flex; align-items: center; gap: 8px; }
+.app-footer p { margin: 0; color: #cbd5e1; font-size: 13px; line-height: 1.7; }
 
 @media (max-width: 980px) {
   .workspace, .review-layout { grid-template-columns: 1fr; }

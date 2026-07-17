@@ -337,25 +337,22 @@ export default function Home() {
             <article className="card input-card">
               <div className="eyebrow"><MapPinned size={18} />YAMARECO TO WORD</div>
               <h1><span>YAMARECO</span><br />TO WORD</h1>
-              <p className="lead">ヤマレコの公開計画URLから、Word計画書を自動作成。</p>
+              <p className="lead">ヤマレコの公開計画URLからWord計画書を自動作成。</p>
 
               <div className="creation-flow" aria-label="Word計画書の作成フロー">
                 <div className="flow-card flow-sources">
-                  <small>01 / SOURCES</small>
-                  <div className="source-pills">
-                    <span><MapPinned size={16} />YAMARECO</span>
-                    <span><Search size={16} />WEB検索</span>
-                  </div>
+                  <small>01</small>
+                  <strong><MapPinned size={21} />ヤマレコのURL</strong>
                 </div>
                 <span className="flow-arrow" aria-hidden="true"><ArrowRight size={20} /></span>
                 <div className="flow-card">
-                  <small>02 / ORGANIZE</small>
-                  <strong><ClipboardCheck size={21} />公開情報を整理</strong>
+                  <small>02</small>
+                  <strong><Search size={21} />web検索</strong>
                 </div>
                 <span className="flow-arrow" aria-hidden="true"><ArrowRight size={20} /></span>
                 <div className="flow-card flow-output">
-                  <small>03 / CREATE</small>
-                  <strong><FileText size={21} />Word自動作成</strong>
+                  <small>03</small>
+                  <strong><FileText size={21} />word完成</strong>
                 </div>
               </div>
 
@@ -377,11 +374,11 @@ export default function Home() {
                     }}
                   />
                   {url && validUrl ? <CheckCircle2 className="valid-icon" size={20} /> : null}
-                  {url && !validUrl ? <X className="invalid-icon" size={20} /> : null}
+                  {url && !validUrl ? <button type="button" className="clear-url-button" onClick={() => setUrl("")} aria-label="URLをクリア"><X className="invalid-icon" size={20} /></button> : null}
                 </div>
               </div>
               <p className={`helper url-status ${url ? (validUrl ? "valid" : "invalid") : ""}`} id="url-status" aria-live="polite">
-                {!url ? "入力すると自動でヤマレコURLを判定します。" : validUrl ? "ヤマレコの公開URLとして認識しました。" : "ヤマレコの公開URLではありません。"}
+                {!url ? "入力すると自動でヤマレコURLを判定します。" : validUrl ? "✓ Verified" : "ヤマレコの公開URLではありません。"}
               </p>
 
               {error ? <div className="error-message" role="alert">{error}</div> : null}
@@ -417,12 +414,16 @@ export default function Home() {
       </div>
       <footer className="app-footer">
         <div>
-          <strong>登山計画書 Field Desk</strong>
-          <p>ヤマレコの公開情報からWord案を作り、必要な箇所だけ手動で仕上げます。</p>
+          <strong>🏔️ Field Desk</strong>
+          <p>ヤマレコから情報を自動抽出し、Word計画書の作成をサポート。必要な箇所だけ手動で完成させます。</p>
         </div>
         <div>
-          <strong>開発メモ</strong>
-          <p>生成処理の所要時間は開発ログに記録され、概念図は自動取得に失敗した場合のみ手動差し替えに切り替わります。</p>
+          <strong>⚡ 高速処理</strong>
+          <p>公開情報の解析とWeb検索を組み合わせ、数十秒で計画書案を生成。交通・宿泊・予算の最新情報を反映します。</p>
+        </div>
+        <div>
+          <strong>🔒 プライベート</strong>
+          <p>公開されたヤマレコ情報のみを参照。個人情報や非公開計画には対応していません。</p>
         </div>
       </footer>
     </main>
