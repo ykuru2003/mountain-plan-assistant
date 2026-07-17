@@ -145,6 +145,40 @@ test("returns every public-information section required by the Word sample", asy
   );
 });
 
+test("keeps planned rest stops in the daily schedule", async () => {
+  const sampleHtml = `
+    <html><body>
+      <div class="date">2026年07月18日(土)</div>
+      <div class="pace-num"><span>1.0</span></div>
+      <div class="record-detail-content-time-block">
+        <div class="item"><div class="time1">10:00</div><div class="name">登山口</div></div>
+        <div class="item"><div class="time1">12:00</div><div class="name">黒沢橋（20分休憩）</div></div>
+        <div class="item"><div class="time1">13:00</div><div class="name">山頂</div></div>
+      </div>
+    </body></html>`;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const target = typeof input === "string" ? input : input.url;
+    if (target === yamarecoUrl) {
+      return new Response(iconv.encode(sampleHtml, "euc-jp"), {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      });
+    }
+    return new Response("Not found", { status: 404 });
+  };
+  const worker = await loadWorker();
+  const response = await worker.fetch(new Request("http://localhost/api/generate", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ url: yamarecoUrl, notes: "個人情報を含まない補足" }),
+  }), env, ctx);
+  globalThis.fetch = originalFetch;
+  assert.equal(response.status, 200);
+  const { plan } = await response.json();
+  assert.ok(plan.schedule.some((line) => line.includes("黒沢橋（20分休憩）")));
+});
+
 test("falls back to web search instructions when Yamareco has no sunset", async () => {
   const route = await import("node:fs/promises").then(({ readFile }) => readFile(new URL("../app/api/generate/route.ts", import.meta.url), "utf8"));
   assert.match(route, /取得できず（Web検索で補完すること）/);

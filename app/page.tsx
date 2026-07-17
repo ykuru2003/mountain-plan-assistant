@@ -67,6 +67,13 @@ type GenerateResponse = {
   plan: Plan;
   demoMode?: boolean;
   warning?: string;
+  generatedImages?: {
+    routeMap?: {
+      contentType: string;
+      bytesBase64: string;
+      filename?: string;
+    };
+  };
 };
 
 const EMPTY_PLAN: Plan = {
@@ -212,6 +219,8 @@ export default function Home() {
   const [notice, setNotice] = useState("");
   const [elapsedMs, setElapsedMs] = useState(0);
   const [generationDurationMs, setGenerationDurationMs] = useState(0);
+  const [executionLog, setExecutionLog] = useState<string[]>([]);
+  const [routeMapImage, setRouteMapImage] = useState<File | null>(null);
 
   const validUrl = useMemo(() => isYamarecoUrl(url), [url]);
 
@@ -250,6 +259,13 @@ export default function Home() {
       setStage(2);
       const normalized = normalizePlan(data.plan);
       setPlan(normalized);
+      if (data.generatedImages?.routeMap) {
+        const bytes = Uint8Array.from(atob(data.generatedImages.routeMap.bytesBase64), (char) => char.charCodeAt(0));
+        const file = new File([bytes], data.generatedImages.routeMap.filename ?? "route-map.png", {
+          type: data.generatedImages.routeMap.contentType || "image/png",
+        });
+        setRouteMapImage(file);
+      }
       setNotice(data.warning ?? (data.demoMode ? "Web検索は未設定です。ヤマレコから取得した内容を確認してください。" : ""));
       await new Promise((resolve) => window.setTimeout(resolve, 450));
       const durationMs = performance.now() - startedAt;
@@ -311,8 +327,10 @@ export default function Home() {
             plan={plan}
             notice={notice}
             generationDurationMs={generationDurationMs}
+            routeMapImage={routeMapImage}
             onBack={() => setStatus("input")}
             onUpdate={updatePlan}
+            onRouteMapImageChange={setRouteMapImage}
           />
         ) : (
           <section className="workspace">
@@ -383,6 +401,16 @@ export default function Home() {
         )}
 
       </div>
+      <footer className="app-footer">
+        <div>
+          <strong>登山計画書 Field Desk</strong>
+          <p>ヤマレコの公開情報からWord案を作り、必要な箇所だけ手動で仕上げます。</p>
+        </div>
+        <div>
+          <strong>開発メモ</strong>
+          <p>生成処理の所要時間は開発ログに記録され、概念図は自動取得に失敗した場合のみ手動差し替えに切り替わります。</p>
+        </div>
+      </footer>
     </main>
   );
 }
@@ -391,20 +419,23 @@ function ReviewView({
   plan,
   notice,
   generationDurationMs,
+  routeMapImage,
   onBack,
   onUpdate,
+  onRouteMapImageChange,
 }: {
   plan: Plan;
   notice: string;
   generationDurationMs: number;
+  routeMapImage: File | null;
   onBack: () => void;
   onUpdate: <K extends keyof Plan>(key: K, value: Plan[K]) => void;
+  onRouteMapImageChange: (file: File | null) => void;
 }) {
   const [wordError, setWordError] = useState("");
   const [wordBusy, setWordBusy] = useState(false);
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewDocument, setPreviewDocument] = useState<Uint8Array | null>(null);
-  const [routeMapImage, setRouteMapImage] = useState<File | null>(null);
   const [timetableImages, setTimetableImages] = useState<File[]>([]);
   const [budgetRecalculating, setBudgetRecalculating] = useState(false);
   const transportRecalculation = useRef<number | null>(null);
@@ -610,8 +641,8 @@ function ReviewView({
           <ScreenshotPicker
             files={routeMapImage ? [routeMapImage] : []}
             label="ルート全体の概念図画像"
-            onFiles={(files) => setRouteMapImage(files[0] ?? null)}
-            onRemove={() => setRouteMapImage(null)}
+            onFiles={(files) => onRouteMapImageChange(files[0] ?? null)}
+            onRemove={() => onRouteMapImageChange(null)}
           />
         </section>
       </article>

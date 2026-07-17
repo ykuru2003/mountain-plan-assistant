@@ -3,6 +3,36 @@ import iconv from "iconv-lite";
 
 type Source = { title: string; url: string };
 
+function normalizeBreakLabel(value: string) {
+  return value.replace(/（\s*休憩\s*）/g, "（休憩）").trim();
+}
+
+async function fetchYamarecoImage(url: string) {
+  try {
+    const response = await fetch(url, {
+      headers: { "user-agent": "MountainPlanAssistant/1.0 (+public-plan-reader)" },
+      redirect: "follow",
+      signal: AbortSignal.timeout(12_000),
+    });
+    if (!response.ok) return null;
+    const contentType = response.headers.get("content-type") ?? "";
+    if (!contentType.startsWith("image/")) return null;
+    const bytes = Buffer.from(await response.arrayBuffer());
+    return { bytes, contentType };
+  } catch {
+    return null;
+  }
+}
+
+function buildConceptMapScreenshotUrl(routeMapUrl: string) {
+  try {
+    const url = new URL(routeMapUrl);
+    return `https://image.thum.io/get/width/1400/crop/1400/${url.toString()}`;
+  } catch {
+    return "";
+  }
+}
+
 const PLAN_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -186,7 +216,7 @@ function parsePublicPlanHtml(html: string): ParsedPublicPlan {
       const item = block.slice(itemStart, itemEnd);
       const time = stripHtml(item.match(/<div class="time1">([^<]+)<\/div>/i)?.[1] ?? "");
       const nameHtml = item.match(/<div class="name">([\s\S]*?)<\/div>/i)?.[1] ?? "";
-      const name = stripHtml(nameHtml);
+      const name = normalizeBreakLabel(stripHtml(nameHtml));
       const pointId = nameHtml.match(/ptid=(\d+)/i)?.[1] ?? "";
       const hasWater = /水場|給水|water|mizuba|fa-tint|icon-water/i.test(item);
       const hasToilet = /トイレ|便所|toilet|icon-toilet|(?:^|["'\s_-])wc(?:["'\s_-]|$)/i.test(item);
@@ -197,6 +227,7 @@ function parsePublicPlanHtml(html: string): ParsedPublicPlan {
     const major = points.filter((point, index) => {
       if (index === 0 || index === points.length - 1) return true;
       if (point.hasWater || point.hasToilet) return true;
+      if (/休憩/.test(point.name)) return true;
       if (/(?:ヒュッテ|山荘|山小屋|小屋|避難小屋|テント場|キャンプ場)$/.test(point.name)) return true;
       return /(?:山(?:北峰|南峰)?|岳|峰|山頂)$/.test(point.name);
     });
@@ -280,7 +311,12 @@ async function readPublicPlanMeta(url: string) {
       : "";
     const parsed = parsePublicPlanHtml(html);
     const sun = await readSunTimes(parsed.firstPointId, parsed.dates, parsed.dayCount);
-    return { title, routeMapUrl, parsed, ...sun, isPrivate: false };
+    const conceptMapUrl = buildConceptMapScreenshotUrl(routeMapUrl);
+    let conceptMapImage: { bytes: Buffer; contentType: string } | null = null;
+    if (conceptMapUrl) {
+      conceptMapImage = await fetchYamarecoImage(conceptMapUrl);
+    }
+    return { title, routeMapUrl, parsed, ...sun, conceptMapImage, isPrivate: false };
   } catch {
     return { title: null, routeMapUrl: "", parsed: null, sunset: "", sunrise: "", isPrivate: false };
   }
@@ -426,19 +462,27 @@ export async function POST(request: Request) {
   const apiKey = process.env.OPENAI_API_KEY;
   const publicMeta = await readPublicPlanMeta(url);
   const yamarecoCompletedAt = Date.now();
+  const timingLog = {
+    mode: "yamareco-only",
+    yamarecoMs: yamarecoCompletedAt - requestStartedAt,
+    totalMs: Date.now() - requestStartedAt,
+  };
   if (publicMeta.isPrivate) {
     return NextResponse.json({ error: "このヤマレコURLは非公開設定のため読み取れません。公開範囲を変更してから再度お試しください。" }, { status: 403 });
   }
   const publicTitle = publicMeta.title;
   if (!apiKey) {
-    console.info("[YAMARECO TO WORD] generation timing", {
-      mode: "yamareco-only",
-      yamarecoMs: yamarecoCompletedAt - requestStartedAt,
-      totalMs: Date.now() - requestStartedAt,
-    });
+    console.info("[YAMARECO TO WORD] generation timing", timingLog);
     return NextResponse.json({
       plan: demoPlan(url, notes, publicTitle, publicMeta.routeMapUrl, publicMeta.parsed, publicMeta.sunset, publicMeta.sunrise),
       demoMode: true,
+      generatedImages: publicMeta.conceptMapImage ? {
+        routeMap: {
+          contentType: publicMeta.conceptMapImage.contentType,
+          bytesBase64: publicMeta.conceptMapImage.bytes.toString("base64"),
+          filename: `${publicTitle || "route-map"}.png`,
+        },
+      } : undefined,
       warning: publicTitle
         ? `公開ページ「${publicTitle}」を読み込みました。Web検索は未設定のため、交通・宿泊の詳細を確認してください。`
         : "Web検索は未設定です。ヤマレコURLと各項目を確認してください。",
@@ -476,6 +520,13 @@ export async function POST(request: Request) {
 
   const payload = await response.json() as Record<string, unknown>;
   const webSearchCompletedAt = Date.now();
+  const generationLog = {
+    mode: "yamareco-and-web",
+    yamarecoMs: yamarecoCompletedAt - requestStartedAt,
+    webSearchMs: webSearchCompletedAt - yamarecoCompletedAt,
+    transcriptionMs: Date.now() - webSearchCompletedAt,
+    totalMs: Date.now() - requestStartedAt,
+  };
   if (!response.ok) {
     const message = payload.error && typeof payload.error === "object" && typeof (payload.error as Record<string, unknown>).message === "string"
       ? (payload.error as Record<string, unknown>).message as string : "公開情報を整理できませんでした。";
@@ -532,12 +583,15 @@ export async function POST(request: Request) {
   for (const source of gatheredSources) {
     try { new URL(source.url); if (!sources.has(source.url)) sources.set(source.url, source); } catch { /* ignore invalid source URLs */ }
   }
-  console.info("[YAMARECO TO WORD] generation timing", {
-    mode: "yamareco-and-web",
-    yamarecoMs: yamarecoCompletedAt - requestStartedAt,
-    webSearchMs: webSearchCompletedAt - yamarecoCompletedAt,
-    transcriptionMs: Date.now() - webSearchCompletedAt,
-    totalMs: Date.now() - requestStartedAt,
+  console.info("[YAMARECO TO WORD] generation timing", generationLog);
+  return NextResponse.json({
+    plan: { ...plan, sources: [...sources.values()] },
+    generatedImages: publicMeta.conceptMapImage ? {
+      routeMap: {
+        contentType: publicMeta.conceptMapImage.contentType,
+        bytesBase64: publicMeta.conceptMapImage.bytes.toString("base64"),
+        filename: `${plan.title || "route-map"}.png`,
+      },
+    } : undefined,
   });
-  return NextResponse.json({ plan: { ...plan, sources: [...sources.values()] } });
 }
