@@ -2,6 +2,7 @@
 
 import {
   ArrowLeft,
+  ArrowRight,
   Check,
   CheckCircle2,
   ClipboardCheck,
@@ -15,7 +16,6 @@ import {
   MapPinned,
   Maximize2,
   Minus,
-  Mountain,
   Plus,
   Search,
   ShieldCheck,
@@ -297,9 +297,9 @@ export default function Home() {
     <main className="app-shell">
       <a className="skip-link" href="#main-content">本文へ移動</a>
       <header className="topbar">
-        <a className="brand" href="#top" aria-label="登山計画書 Field Desk トップ">
-          <span className="brand-mark"><Mountain size={28} strokeWidth={2.4} /></span>
-          <span className="brand-copy"><strong>登山計画書</strong><small>ALPINE DOCUMENTS</small></span>
+        <a className="brand" href="#top" aria-label="YAMARECO TO WORD トップ">
+          <span className="brand-mark"><Route size={25} strokeWidth={2.2} /></span>
+          <span className="brand-copy"><strong>YAMARECO TO WORD</strong></span>
         </a>
       </header>
 
@@ -337,12 +337,26 @@ export default function Home() {
             <article className="card input-card">
               <div className="eyebrow"><MapPinned size={18} />YAMARECO TO WORD</div>
               <h1><span>YAMARECO</span><br />TO WORD</h1>
-              <p className="lead">ヤマレコの公開計画URLから、提出用のWord計画書を作成。行程と公開情報を内蔵書式へ反映し、実際のWordを確認しながら仕上げられます。</p>
+              <p className="lead">ヤマレコの公開計画URLから、Word計画書を自動作成。</p>
 
-              <div className="feature-row" aria-label="主な機能">
-                <span><Search size={18} /><strong>公開情報を整理</strong></span>
-                <span><FileText size={18} /><strong>Wordへ直接記入</strong></span>
-                <span><Eye size={18} /><strong>実ファイルを確認</strong></span>
+              <div className="creation-flow" aria-label="Word計画書の作成フロー">
+                <div className="flow-card flow-sources">
+                  <small>01 / SOURCES</small>
+                  <div className="source-pills">
+                    <span><MapPinned size={16} />YAMARECO</span>
+                    <span><Search size={16} />WEB検索</span>
+                  </div>
+                </div>
+                <span className="flow-arrow" aria-hidden="true"><ArrowRight size={20} /></span>
+                <div className="flow-card">
+                  <small>02 / ORGANIZE</small>
+                  <strong><ClipboardCheck size={21} />公開情報を整理</strong>
+                </div>
+                <span className="flow-arrow" aria-hidden="true"><ArrowRight size={20} /></span>
+                <div className="flow-card flow-output">
+                  <small>03 / CREATE</small>
+                  <strong><FileText size={21} />Word自動作成</strong>
+                </div>
               </div>
 
               <label htmlFor="yamareco-url">ヤマレコの公開URL</label>
