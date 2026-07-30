@@ -5,7 +5,6 @@ import {
   ArrowRight,
   Check,
   CheckCircle2,
-  ClipboardCheck,
   Clock3,
   Download,
   Eye,
@@ -24,7 +23,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { type ClipboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type ClipboardEvent, type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { fillWordTemplate, type WordImage } from "@/lib/word-template";
 
 type Source = { title: string; url: string };
@@ -74,8 +73,23 @@ type GenerateResponse = {
       bytesBase64: string;
       filename?: string;
     };
+    timetables?: Array<{
+      contentType: string;
+      bytesBase64: string;
+      filename?: string;
+    }>;
   };
 };
+
+type UsageHistoryItem = {
+  url: string;
+  title: string;
+  usedAt: string;
+};
+
+const USAGE_HISTORY_KEY = "yamareco-research-history";
+const MAX_USAGE_HISTORY = 12;
+const TEMPORARY_OPEN_REVIEW_WITHOUT_RETRIEVAL = true;
 
 const EMPTY_PLAN: Plan = {
   title: "",
@@ -127,35 +141,84 @@ const BUDGET_DEFAULTS = [
   "合計｜＋α｜",
 ];
 
-const AGENCY_TYPES = [
-  "現地連絡先", "顧問", "大学",
-  "コーチ", "コーチ", "コーチ", "コーチ", "コーチ", "コーチ",
-  "主将", "バス", "タクシー", "警察", "山小屋", "病院",
+const AGENCY_SCHEMA = [
+  { type: "現地連絡先", count: 1 },
+  { type: "顧問", count: 1 },
+  { type: "大学", count: 1 },
+  { type: "コーチ", count: 6 },
+  { type: "主将", count: 1 },
+  { type: "バス", count: 1 },
+  { type: "タクシー", count: 1 },
+  { type: "警察", count: 1 },
+  { type: "山小屋", count: 1 },
+  { type: "病院", count: 1 },
 ];
+function inferAgencyType(value: string) {
+  const [rawType = ""] = value.split(/[｜|]/).map((part) => part.trim());
+  if (AGENCY_SCHEMA.some(({ type }) => type === rawType)) return rawType;
+  if (/警察/.test(value)) return "警察";
+  if (/病院|医療/.test(value)) return "病院";
+  if (/山小屋|ヒュッテ|山荘/.test(value)) return "山小屋";
+  if (/タクシー/.test(value)) return "タクシー";
+  if (/バス/.test(value)) return "バス";
+  if (/コーチ/.test(value)) return "コーチ";
+  if (/主将/.test(value)) return "主将";
+  if (/大学/.test(value)) return "大学";
+  if (/顧問/.test(value)) return "顧問";
+  if (/現地連絡先/.test(value)) return "現地連絡先";
+  return "";
+}
+
+function normalizeAgencyContact(rawContact: string) {
+  const contact = rawContact.trim();
+  if (!contact) return "TEL: ";
+  if (/\d/.test(contact)) return `TEL: ${contact.replace(/^TEL\s*[:：]\s*/i, "")}`;
+  return contact;
+}
 
 function normalizeAgencyRows(values: string[]) {
-  const rows = AGENCY_TYPES.map((type) => `${type}｜｜`);
-  const used = new Set<number>();
+  const buckets = new Map(AGENCY_SCHEMA.map(({ type }) => [type, [] as string[]]));
+  let currentType = "";
   for (const value of values) {
     const [rawType = "", rawName = "", rawContact = ""] = value.split(/[｜|]/).map((part) => part.trim());
-    const exact = AGENCY_TYPES.includes(rawType);
-    const inferred = exact ? rawType
-      : /警察/.test(value) ? "警察"
-        : /病院|医療/.test(value) ? "病院"
-          : /山小屋|ヒュッテ|山荘/.test(value) ? "山小屋"
-            : /タクシー/.test(value) ? "タクシー"
-              : /バス/.test(value) ? "バス" : "";
-    const index = AGENCY_TYPES.findIndex((type, itemIndex) => type === inferred && !used.has(itemIndex));
-    const contact = rawContact && !/^TEL\s*[:：]/i.test(rawContact) && /\d/.test(rawContact)
-      ? `TEL: ${rawContact}` : rawContact.replace(/^TEL\s*[:：]\s*/i, "TEL: ");
-    if (index < 0) {
-      if (inferred || rawType) rows.push(`${inferred || rawType}｜${exact ? rawName : rawType}｜${contact || rawName}`);
-      continue;
-    }
-    used.add(index);
-    rows[index] = exact ? `${rawType}｜${rawName}｜${contact}` : `${inferred}｜${rawType}｜${rawName && `TEL: ${rawName.replace(/^TEL\s*[:：]\s*/i, "")}`}`;
+    const inferred = inferAgencyType(value) || currentType;
+    if (!inferred || !buckets.has(inferred)) continue;
+    currentType = inferred;
+    const exact = rawType === inferred;
+    const name = exact || !rawType ? rawName : rawType;
+    const contact = normalizeAgencyContact(rawContact || (!exact && rawName && /\d/.test(rawName) ? rawName : ""));
+    buckets.get(inferred)?.push(`${inferred}｜${name}｜${contact}`);
   }
-  return rows;
+  const rows = AGENCY_SCHEMA.flatMap(({ type, count }) => {
+    const bucketRows = buckets.get(type) ?? [];
+    const defaults = Array.from({ length: Math.max(count, bucketRows.length) }, (_, index) =>
+      bucketRows[index] ?? `${type}｜｜TEL: `,
+    );
+    return defaults;
+  });
+  return collapseDuplicateAgencyLabels(rows);
+}
+
+function collapseDuplicateAgencyLabels(values: string[]) {
+  const seen = new Set<string>();
+  return values.map((value) => {
+    const [item = "", name = "", contact = ""] = value.split(/[｜|]/).map((part) => part.trim());
+    if (!item || !seen.has(item)) {
+      if (item) seen.add(item);
+      return `${item}｜${name}｜${contact}`;
+    }
+    return `｜${name}｜${contact}`;
+  });
+}
+
+function normalizeBudgetLabel(item: string, note: string) {
+  const transportDetail = item.match(/^交通費\s*[（(［\[]?\s*(鉄道|電車|JR|バス)\s*[）)\］\]]?$/);
+  if (!transportDetail) return { item, note };
+  const detail = transportDetail[1] === "電車" ? "鉄道" : transportDetail[1];
+  return {
+    item: "交通費",
+    note: note.includes(detail) ? note : [detail, note].filter(Boolean).join("："),
+  };
 }
 
 function normalizeBudgetRows(values: string[]) {
@@ -164,11 +227,11 @@ function normalizeBudgetRows(values: string[]) {
   return rows.map((row, index) => {
     const [item = "", rawAmount = "", rawNote = ""] = row.split(/[｜|]/).map((part) => part.trim());
     let amount = /^(?:0|0円|¥0|￥0)$/.test(rawAmount) ? "" : rawAmount;
-    const note = rawNote.replace(/1人分概算/g, "").trim();
-    if (/タクシー/.test(`${item}${note}`)) amount = "未定";
+    const normalized = normalizeBudgetLabel(item, rawNote.replace(/1人分概算/g, "").trim());
+    if (/タクシー/.test(`${normalized.item}${normalized.note}`)) amount = "未定";
     if (index === 5 && amount && !/[+＋]α$/.test(amount)) amount = `${amount}＋α`;
     if (index === 5 && !amount) amount = "＋α";
-    return `${item || BUDGET_DEFAULTS[index].split("｜")[0]}｜${amount}｜${note}`;
+    return `${normalized.item || BUDGET_DEFAULTS[index].split("｜")[0]}｜${amount}｜${normalized.note}`;
   });
 }
 
@@ -188,10 +251,74 @@ function normalizePlan(value: (Partial<Plan> & { access?: string; equipment?: st
   return merged;
 }
 
+function yamarecoPlanUrl(sources: Source[]) {
+  return sources.find((source) => {
+    try {
+      const url = new URL(source.url);
+      return /ヤマレコ/.test(source.title) && (url.hostname === "yamareco.com" || url.hostname.endsWith(".yamareco.com"));
+    } catch {
+      return false;
+    }
+  })?.url ?? "";
+}
+
+function extractHttpsUrls(value: string) {
+  return [...value.matchAll(/https:\/\/[^\s｜|、）)]+/g)].map((match) => match[0]);
+}
+
+const YAMARECO_REFERENCE_WIDTH = 1100;
+const WEB_ORGANIZATION_TYPES = new Set(["バス", "タクシー", "警察", "山小屋", "病院"]);
+
+function pipeCells(row: string, count: number) {
+  const cells = row.split(/[｜|]/).map((cell) => cell.trim());
+  while (cells.length < count) cells.push("");
+  return cells.slice(0, count);
+}
+
+function visibleWebOrganizationRows(rows: string[]) {
+  let currentType = "";
+  const seenTypes = new Set<string>();
+  return rows.flatMap((rawRow, index) => {
+    const [rawItem = "", name = "", contact = ""] = pipeCells(rawRow, 3);
+    if (rawItem) currentType = rawItem;
+    if (!WEB_ORGANIZATION_TYPES.has(currentType)) return [];
+    const item = rawItem && !seenTypes.has(rawItem) ? rawItem : "";
+    if (rawItem) seenTypes.add(rawItem);
+    return [{ row: `${item}｜${name}｜${contact}`, index }];
+  });
+}
+
+function categoryCellSpan(rows: string[], rowIndex: number) {
+  const [item = ""] = pipeCells(rows[rowIndex] ?? "", 3);
+  const [previous = ""] = pipeCells(rows[rowIndex - 1] ?? "", 3);
+  if (!item || previous === item) return 0;
+  let span = 1;
+  for (let index = rowIndex + 1; index < rows.length; index += 1) {
+    const [nextItem = ""] = pipeCells(rows[index] ?? "", 3);
+    if (nextItem && nextItem !== item) break;
+    span += 1;
+  }
+  return span;
+}
+
+function buildTimetableCitations(rows: unknown) {
+  if (!Array.isArray(rows)) return [];
+  return rows.flatMap((row, rowIndex) => {
+    if (typeof row !== "string") return [];
+    const [direction = "", route = ""] = pipeCells(row, 3);
+    return extractHttpsUrls(row).map((url, urlIndex) => ({
+      direction: direction || `時刻表${rowIndex + 1}`,
+      key: `${rowIndex}-${urlIndex}-${url}`,
+      label: `${route || "バス時刻表"}（${new URL(url).hostname.replace(/^www\./, "")}）`,
+      url,
+    }));
+  });
+}
+
 const PROGRESS_STAGES = [
   { label: "ヤマレコを読み取り中", detail: "日程・ルート・山域を確認" },
   { label: "Web検索中", detail: "交通・宿泊・日の入りを確認" },
-  { label: "Wordへ転記中", detail: "計画書の項目へ反映" },
+  { label: "情報を整理中", detail: "取得した公開情報を確認しやすく整形" },
 ];
 
 function formatElapsed(milliseconds: number) {
@@ -211,6 +338,40 @@ function isYamarecoUrl(value: string) {
   }
 }
 
+function readUsageHistory() {
+  try {
+    const raw = window.localStorage.getItem(USAGE_HISTORY_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as UsageHistoryItem[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item) => item && typeof item.url === "string" && typeof item.title === "string" && typeof item.usedAt === "string")
+      .slice(0, MAX_USAGE_HISTORY);
+  } catch {
+    return [];
+  }
+}
+
+function writeUsageHistory(items: UsageHistoryItem[]) {
+  try {
+    window.localStorage.setItem(USAGE_HISTORY_KEY, JSON.stringify(items.slice(0, MAX_USAGE_HISTORY)));
+  } catch {
+    // 履歴保存に失敗しても、情報取得の本体は止めない。
+  }
+}
+
+function upsertUsageHistory(items: UsageHistoryItem[], item: UsageHistoryItem) {
+  return [item, ...items.filter((current) => current.url !== item.url)].slice(0, MAX_USAGE_HISTORY);
+}
+
+function temporaryReviewPlan(url: string) {
+  return normalizePlan({
+    title: "手入力用の山行情報",
+    sources: [{ title: "入力したヤマレコ", url }],
+    routeMapUrl: url,
+  });
+}
+
 export default function Home() {
   const [url, setUrl] = useState("");
   const [status, setStatus] = useState<"input" | "generating" | "review">("input");
@@ -220,8 +381,10 @@ export default function Home() {
   const [notice, setNotice] = useState("");
   const [elapsedMs, setElapsedMs] = useState(0);
   const [generationDurationMs, setGenerationDurationMs] = useState(0);
-  const [executionLog, setExecutionLog] = useState<string[]>([]);
   const [routeMapImage, setRouteMapImage] = useState<File | null>(null);
+  const [generatedTimetableImages, setGeneratedTimetableImages] = useState<File[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [usageHistory, setUsageHistory] = useState<UsageHistoryItem[]>([]);
 
   const validUrl = useMemo(() => isYamarecoUrl(url), [url]);
 
@@ -236,6 +399,10 @@ export default function Home() {
     };
   }, [status]);
 
+  useEffect(() => {
+    setUsageHistory(readUsageHistory());
+  }, []);
+
   async function generatePlan() {
     if (!validUrl) {
       setError("ヤマレコの公開URLを確認してください。");
@@ -246,6 +413,22 @@ export default function Home() {
     setStage(0);
     setElapsedMs(0);
     setGenerationDurationMs(0);
+    if (TEMPORARY_OPEN_REVIEW_WITHOUT_RETRIEVAL) {
+      const normalized = temporaryReviewPlan(url);
+      setPlan(normalized);
+      setRouteMapImage(null);
+      setGeneratedTimetableImages([]);
+      setNotice("一時仕様として、情報取得を待たずに入力画面を開いています。");
+      const nextHistory = upsertUsageHistory(usageHistory, {
+        url,
+        title: normalized.title,
+        usedAt: new Date().toISOString(),
+      });
+      setUsageHistory(nextHistory);
+      writeUsageHistory(nextHistory);
+      setStatus("review");
+      return;
+    }
     setStatus("generating");
     const startedAt = performance.now();
 
@@ -256,34 +439,40 @@ export default function Home() {
         body: JSON.stringify({ url }),
       });
       const data = (await response.json()) as GenerateResponse & { error?: string };
-      if (!response.ok) throw new Error(data.error ?? "計画書案を作成できませんでした。");
+      if (!response.ok) throw new Error(data.error ?? "公開情報を取得できませんでした。");
       setStage(2);
       const normalized = normalizePlan(data.plan);
       setPlan(normalized);
-      if (data.generatedImages?.routeMap) {
-        const bytes = Uint8Array.from(atob(data.generatedImages.routeMap.bytesBase64), (char) => char.charCodeAt(0));
-        const file = new File([bytes], data.generatedImages.routeMap.filename ?? "route-map.png", {
-          type: data.generatedImages.routeMap.contentType || "image/png",
-        });
-        setRouteMapImage(file);
-      }
+      const imageFile = (image: { bytesBase64: string; contentType: string; filename?: string }, fallbackName: string) => {
+        const bytes = Uint8Array.from(atob(image.bytesBase64), (char) => char.charCodeAt(0));
+        return new File([bytes], image.filename ?? fallbackName, { type: image.contentType || "image/png" });
+      };
+      if (data.generatedImages?.routeMap) setRouteMapImage(imageFile(data.generatedImages.routeMap, "route-map.png"));
+      setGeneratedTimetableImages((data.generatedImages?.timetables ?? []).map((image, index) => imageFile(image, `timetable-${index + 1}.png`)));
       setNotice(data.warning ?? (data.demoMode ? "Web検索は未設定です。ヤマレコから取得した内容を確認してください。" : ""));
       await new Promise((resolve) => window.setTimeout(resolve, 450));
       const durationMs = performance.now() - startedAt;
       setElapsedMs(durationMs);
       setGenerationDurationMs(durationMs);
-      console.info("[YAMARECO TO WORD] generation completed", {
+      console.info("[YAMARECO RESEARCH] retrieval completed", {
         durationMs: Math.round(durationMs),
         completedAt: new Date().toISOString(),
       });
+      const nextHistory = upsertUsageHistory(usageHistory, {
+        url,
+        title: normalized.title || "名称未設定の山行情報",
+        usedAt: new Date().toISOString(),
+      });
+      setUsageHistory(nextHistory);
+      writeUsageHistory(nextHistory);
       setStatus("review");
     } catch (reason) {
       const durationMs = performance.now() - startedAt;
-      console.info("[YAMARECO TO WORD] generation failed", {
+      console.info("[YAMARECO RESEARCH] retrieval failed", {
         durationMs: Math.round(durationMs),
         completedAt: new Date().toISOString(),
       });
-      setError(reason instanceof Error ? reason.message : "計画書案を作成できませんでした。");
+      setError(reason instanceof Error ? reason.message : "公開情報を取得できませんでした。");
       setStatus("input");
     }
   }
@@ -292,21 +481,26 @@ export default function Home() {
     setPlan((current) => ({ ...current, [key]: value }));
   }
 
+  function clearUsageHistory() {
+    setUsageHistory([]);
+    writeUsageHistory([]);
+  }
+
   const activeStep = status === "review" ? 3 : status === "generating" ? 2 : 1;
 
   return (
     <main className="app-shell">
       <a className="skip-link" href="#main-content">本文へ移動</a>
       <header className="topbar">
-        <a className="brand" href="#top" aria-label="YAMARECO TO WORD トップ">
+        <a className="brand" href="#top" aria-label="YAMARECO RESEARCH トップ">
           <span className="brand-mark"><Route size={25} strokeWidth={2.2} /></span>
-          <span className="brand-copy"><strong>YAMARECO TO WORD</strong></span>
+          <span className="brand-copy"><strong>YAMARECO RESEARCH</strong></span>
         </a>
       </header>
 
       <div className="page" id="main-content">
-        <ol className="stepper" aria-label="作成手順">
-          {["URLを入力", "内容を確認", "Word完成"].map((label, index) => {
+        <ol className="stepper" aria-label="情報取得手順">
+          {["URLを入力", "情報を取得", "内容を確認"].map((label, index) => {
             const number = index + 1;
             const complete = number < activeStep;
             return (
@@ -328,6 +522,7 @@ export default function Home() {
             plan={plan}
             notice={notice}
             generationDurationMs={generationDurationMs}
+            initialTimetableImages={generatedTimetableImages}
             routeMapImage={routeMapImage}
             onBack={() => setStatus("input")}
             onUpdate={updatePlan}
@@ -336,11 +531,11 @@ export default function Home() {
         ) : (
           <section className="workspace">
             <article className="card input-card">
-              <div className="eyebrow"><Share2 size={18} />YAMARECO TO WORD</div>
-              <h1><span>YAMARECO</span><br />TO WORD</h1>
-              <p className="lead">ヤマレコの公開計画URLからWord計画書を自動作成。</p>
+              <div className="eyebrow"><Search size={18} />YAMARECO / WEB RESEARCH</div>
+              <h1><span>山行情報を</span><br />代わりに取得</h1>
+              <p className="lead">ヤマレコとWeb検索で分かる公開情報を集めて、確認しやすく整理します。</p>
 
-              <div className="creation-flow" aria-label="Word計画書の作成フロー">
+              <div className="creation-flow" aria-label="公開情報の取得フロー">
                 <div className="flow-card flow-sources">
                   <small>01</small>
                   <strong><Share2 size={21} />ヤマレコのURL</strong>
@@ -353,7 +548,7 @@ export default function Home() {
                 <span className="flow-arrow" aria-hidden="true"><ArrowRight size={20} /></span>
                 <div className="flow-card flow-output">
                   <small>03</small>
-                  <strong><Share2 size={21} />word完成</strong>
+                  <strong><FileText size={21} />抽出結果を確認</strong>
                 </div>
               </div>
 
@@ -382,11 +577,55 @@ export default function Home() {
                 {!url ? "入力すると自動でヤマレコURLを判定します。" : validUrl ? "✓ Verified" : "ヤマレコの公開URLではありません。"}
               </p>
 
+              <section className="usage-history">
+                <button
+                  aria-expanded={historyOpen}
+                  className="history-toggle"
+                  onClick={() => setHistoryOpen((open) => !open)}
+                  type="button"
+                >
+                  <Clock3 size={17} />
+                  使った履歴
+                  <span>{usageHistory.length}件</span>
+                </button>
+                {historyOpen ? (
+                  <div className="history-panel">
+                    {usageHistory.length ? (
+                      <>
+                        <div className="history-panel-head">
+                          <strong>最近使ったヤマレコ</strong>
+                          <button onClick={clearUsageHistory} type="button">履歴を消去</button>
+                        </div>
+                        <ul>
+                          {usageHistory.map((item) => (
+                            <li key={`${item.url}-${item.usedAt}`}>
+                              <button
+                                onClick={() => {
+                                  setUrl(item.url);
+                                  setError("");
+                                }}
+                                type="button"
+                              >
+                                <strong>{item.title}</strong>
+                                <span>{new Date(item.usedAt).toLocaleString("ja-JP")}</span>
+                                <small>{item.url}</small>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    ) : (
+                      <p>取得に成功したヤマレコURLがここに残ります。</p>
+                    )}
+                  </div>
+                ) : null}
+              </section>
+
               {error ? <div className="error-message" role="alert">{error}</div> : null}
 
               <button className="primary-button" disabled={status === "generating"} onClick={generatePlan} type="button">
                 {status === "generating" ? <LoaderCircle className="spin" size={23} /> : <Route size={23} />}
-                {status === "generating" ? "計画書を作成中" : "Word計画書を作成"}
+                {status === "generating" ? "公開情報を取得中" : "公開情報を取得"}
               </button>
               {status === "generating" ? (
                 <div className="generation-progress" aria-live="polite" role="status">
@@ -415,12 +654,12 @@ export default function Home() {
       </div>
       <footer className="app-footer">
         <div>
-          <strong>🏔️ Field Desk</strong>
-          <p>ヤマレコから情報を自動抽出し、Word計画書の作成をサポート。必要な箇所だけ手動で完成させます。</p>
+          <strong>🏔️ Research Desk</strong>
+          <p>ヤマレコやWeb検索で分かる山行情報を代わりに取得し、確認しやすい形に整理します。</p>
         </div>
         <div>
           <strong>⚡ 高速処理</strong>
-          <p>公開情報の解析とWeb検索を組み合わせ、数十秒で計画書案を生成。交通・宿泊・予算の最新情報を反映します。</p>
+          <p>公開ページの解析とWeb検索を組み合わせ、交通・宿泊・予算・連絡先などの調査を短時間でまとめます。</p>
         </div>
         <div>
           <strong>🔒 プライベート</strong>
@@ -435,6 +674,7 @@ function ReviewView({
   plan,
   notice,
   generationDurationMs,
+  initialTimetableImages,
   routeMapImage,
   onBack,
   onUpdate,
@@ -443,6 +683,7 @@ function ReviewView({
   plan: Plan;
   notice: string;
   generationDurationMs: number;
+  initialTimetableImages: File[];
   routeMapImage: File | null;
   onBack: () => void;
   onUpdate: <K extends keyof Plan>(key: K, value: Plan[K]) => void;
@@ -452,9 +693,12 @@ function ReviewView({
   const [wordBusy, setWordBusy] = useState(false);
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewDocument, setPreviewDocument] = useState<Uint8Array | null>(null);
-  const [timetableImages, setTimetableImages] = useState<File[]>([]);
+  const [timetableImages, setTimetableImages] = useState<File[]>(initialTimetableImages);
   const [budgetRecalculating, setBudgetRecalculating] = useState(false);
+  const [yamarecoPaneOpen, setYamarecoPaneOpen] = useState(true);
+  const [yamarecoFrameSize, setYamarecoFrameSize] = useState({ scale: 1, height: 1200 });
   const transportRecalculation = useRef<number | null>(null);
+  const yamarecoFrameRef = useRef<HTMLDivElement | null>(null);
   const listValue = (value: string[]) => value.join("\n");
   const toList = (value: string) => value.split("\n").map((item) => item.trim()).filter(Boolean);
   const toScheduleList = (value: string) => value
@@ -463,23 +707,44 @@ function ReviewView({
     .slice(value.startsWith("\n") ? 1 : 0, value.endsWith("\n") ? -1 : undefined);
   const requiredFields: Array<{ label: string; value: string | unknown[] }> = [
     { label: "計画名", value: plan.title }, { label: "日程", value: plan.dates },
-    { label: "山域", value: plan.area }, { label: "山行目的", value: plan.purpose },
+    { label: "山域", value: plan.area },
     { label: "集合", value: plan.meeting }, { label: "解散", value: plan.dismissal },
     { label: "入山地点", value: plan.entryPoint }, { label: "下山地点", value: plan.exitPoint },
     { label: "入山時刻", value: plan.entryTime }, { label: "下山時刻", value: plan.exitTime },
     { label: "日別行程", value: plan.schedule }, { label: "交通", value: plan.transport },
     { label: "宿泊", value: plan.lodging }, { label: "コースタイム倍率", value: plan.courseTimeMultiplier },
-    { label: "日の入り", value: plan.sunset }, { label: "参照元", value: plan.sources },
+    { label: "日の入り", value: plan.sunset },
   ];
   const scheduleDayCount = plan.schedule.filter((line) => /^＜\d+日目/.test(line)).length;
   if (scheduleDayCount > 1) requiredFields.push({ label: "日の出", value: plan.sunrise });
   const missingFields = requiredFields.filter(({ value }) => Array.isArray(value) ? value.length === 0 : value.trim().length === 0);
   const completed = requiredFields.length - missingFields.length;
   const completion = Math.round((completed / requiredFields.length) * 100);
+  const displayedOrganizations = visibleWebOrganizationRows(plan.relatedOrganizations);
+  const displayedOrganizationRows = displayedOrganizations.map((item) => item.row);
+  const planUrl = yamarecoPlanUrl(plan.sources);
+  const timetableCitationLinks = buildTimetableCitations(plan.timetables);
 
   useEffect(() => () => {
     if (transportRecalculation.current) window.clearTimeout(transportRecalculation.current);
   }, []);
+
+  useEffect(() => {
+    const frame = yamarecoFrameRef.current;
+    if (!frame || !planUrl || !yamarecoPaneOpen) return;
+    const updateFrameSize = () => {
+      const { width, height } = frame.getBoundingClientRect();
+      const scale = Math.min(1, Math.max(0.3, width / YAMARECO_REFERENCE_WIDTH));
+      setYamarecoFrameSize({
+        scale,
+        height: Math.max(1200, Math.ceil(height / scale)),
+      });
+    };
+    updateFrameSize();
+    const observer = new ResizeObserver(updateFrameSize);
+    observer.observe(frame);
+    return () => observer.disconnect();
+  }, [planUrl, yamarecoPaneOpen]);
 
   function updateTransport(value: string) {
     onUpdate("transport", value);
@@ -499,6 +764,22 @@ function ReviewView({
         setBudgetRecalculating(false);
       }
     }, 1400);
+  }
+
+  function updateBudgetCell(rowIndex: number, columnIndex: number, value: string) {
+    const nextRows = [...plan.budgetItems];
+    const cells = pipeCells(nextRows[rowIndex] ?? "", 3);
+    cells[columnIndex] = value.replace(/[｜|]/g, " ");
+    nextRows[rowIndex] = cells.join("｜");
+    onUpdate("budgetItems", normalizeBudgetRows(nextRows));
+  }
+
+  function updateOrganizationCell(rowIndex: number, columnIndex: number, value: string) {
+    const nextRows = [...plan.relatedOrganizations];
+    const cells = pipeCells(nextRows[rowIndex] ?? "", 3);
+    cells[columnIndex] = value.replace(/[｜|]/g, " ");
+    nextRows[rowIndex] = cells.join("｜");
+    onUpdate("relatedOrganizations", nextRows);
   }
 
   async function buildWordDocument() {
@@ -548,175 +829,153 @@ function ReviewView({
   }
 
   return (
-    <section className="review-layout">
+    <section className={`review-layout ${yamarecoPaneOpen && planUrl ? "with-yamareco-pane" : ""}`}>
       <div className="review-toolbar">
         <button className="text-button" onClick={onBack} type="button"><ArrowLeft size={18} />入力へ戻る</button>
-        <div className="review-toolbar-title"><small>編集中の計画書</small><strong>{plan.title || "名称未設定の計画書"}</strong>{generationDurationMs > 0 ? <span className="generation-result"><Clock3 size={13} />作成時間 {formatElapsed(generationDurationMs)}</span> : null}</div>
+        <div className="review-toolbar-title"><small>編集中の抽出情報</small><strong>{plan.title || "名称未設定の山行情報"}</strong>{generationDurationMs > 0 ? <span className="generation-result"><Clock3 size={13} />取得時間 {formatElapsed(generationDurationMs)}</span> : null}</div>
         <div className="review-toolbar-actions">
+          {planUrl ? <button className="outline-button" onClick={() => setYamarecoPaneOpen((open) => !open)} type="button">{yamarecoPaneOpen ? "ヤマレコを閉じる" : "ヤマレコを表示"}</button> : null}
           <button className="outline-button" disabled={previewBusy} onClick={previewWord} type="button"><Eye size={17} />{previewBusy ? "作成中" : "Wordプレビュー"}</button>
           <button className="primary-small" disabled={wordBusy} onClick={downloadWord} type="button"><Download size={17} />{wordBusy ? "作成中" : "Word出力"}</button>
         </div>
       </div>
       {wordError ? <div className="word-error word-error-banner" role="alert">{wordError}</div> : null}
       {notice ? <div className="notice">{notice}</div> : null}
-      <article className="plan-editor">
-        <div className="editor-heading"><span>WORD CONTENT EDITOR</span><small>修正内容を標準Word書式へ反映</small></div>
-        <div className="manual-edit-guide">
-          <span>手動入力</span>
-          <p>黄色の欄を確認・追記してください。入力後は画面上部の「Wordプレビュー」で、実際の記入位置を確認できます。</p>
+      {planUrl && yamarecoPaneOpen ? (
+        <aside className="yamareco-reference-pane" aria-label="入力したヤマレコ">
+          <div className="yamareco-reference-toolbar">
+            <strong>入力したヤマレコ</strong>
+            <div>
+              <a href={planUrl} rel="noreferrer" target="_blank">別タブで開く<ExternalLink size={12} /></a>
+              <button onClick={() => setYamarecoPaneOpen(false)} type="button">折りたたむ</button>
+            </div>
+          </div>
+          <div
+            className="yamareco-reference-frame"
+            ref={yamarecoFrameRef}
+            style={{ "--yamareco-scale": yamarecoFrameSize.scale } as CSSProperties}
+          >
+            <iframe
+              src={planUrl}
+              style={{ width: YAMARECO_REFERENCE_WIDTH, height: yamarecoFrameSize.height }}
+              title="入力したヤマレコ"
+            />
+          </div>
+          <p>表示されない場合は、上の「別タブで開く」から確認してください。</p>
+        </aside>
+      ) : null}
+      <article className="plan-editor extraction-editor">
+        <div className="editor-heading">
+          <span>AI抽出結果の確認</span>
         </div>
-        <nav className="section-nav" aria-label="入力項目へ移動">
-          <a href="#section-basic"><span>01</span>基本情報</a>
-          <a href="#section-route"><span>02</span>日別ルート</a>
-          <a href="#section-access"><span>03</span>交通・宿泊</a>
-          <a href="#section-budget"><span>04</span>予算・連絡先</a>
-          <a href="#section-map"><span>05</span>概念図</a>
-        </nav>
+
         <div className="completion-card">
-          <div><ClipboardCheck size={22} /><span><strong>Word記入項目 {completion}%</strong><small>{completed} / {requiredFields.length}項目を確認済み</small></span></div>
+          <div>
+            <FileText size={24} />
+            <span><strong>抽出項目 {completion}%</strong><small>{missingFields.length ? `未入力：${missingFields.map(({ label }) => label).join("、")}` : "公開情報の抽出項目が揃っています。"}</small></span>
+          </div>
           <progress max="100" value={completion}>{completion}%</progress>
-          <p className={missingFields.length ? "completion-detail incomplete" : "completion-detail complete"}>
-            {missingFields.length ? <>未入力：{missingFields.map(({ label }) => label).join("、")}。取得できなかった項目は手動で補ってください。</> : <><CheckCircle2 size={15} />Word出力に必要な項目が揃っています。</>}
-          </p>
         </div>
 
-        <section className="editor-section" id="section-basic">
-          <div className="section-title"><span>01</span><div><h2>基本情報</h2><p>計画書1ページ目の基本欄</p></div></div>
-          <label>計画名 <em className="source-badge yamareco">ヤマレコ</em><span className="required-mark">必須</span><input aria-invalid={!plan.title.trim()} aria-required="true" value={plan.title} onChange={(event) => onUpdate("title", event.target.value)} /></label>
+        <nav className="section-nav" aria-label="編集セクション">
+          <a href="#basic"><span>01</span>基本情報</a>
+          <a href="#route"><span>02</span>行程</a>
+          <a href="#web"><span>03</span>Web検索</a>
+          <a href="#tables"><span>04</span>予算・連絡先</a>
+          <a href="#images"><span>05</span>画像</a>
+        </nav>
+
+        <section className="editor-section" id="basic">
+          <div className="section-title"><span>01</span><div><h2>ヤマレコから抽出</h2><p>計画名、日程、山域、入下山地点など、ヤマレコ本文から拾った情報です。</p></div></div>
           <div className="editor-grid">
-            <label>日程 <em className="source-badge yamareco">ヤマレコ</em><span className="required-mark">必須</span><input aria-invalid={!plan.dates.trim()} aria-required="true" value={plan.dates} onChange={(event) => onUpdate("dates", event.target.value)} /></label>
-            <label>山域 <em className="source-badge yamareco">ヤマレコ</em><span className="required-mark">必須</span><input aria-invalid={!plan.area.trim()} aria-required="true" value={plan.area} onChange={(event) => onUpdate("area", event.target.value)} /></label>
+            <label>計画名<i className="source-badge yamareco">YAMARECO</i><input aria-invalid={!plan.title} value={plan.title} onChange={(event) => onUpdate("title", event.target.value)} /></label>
+            <label>日程<i className="source-badge yamareco">YAMARECO</i><input aria-invalid={!plan.dates} value={plan.dates} onChange={(event) => onUpdate("dates", event.target.value)} /></label>
+            <label>山域<i className="source-badge yamareco">YAMARECO</i><input aria-invalid={!plan.area} value={plan.area} onChange={(event) => onUpdate("area", event.target.value)} /></label>
+            <label>コースタイム倍率<i className="source-badge yamareco">YAMARECO</i><input value={plan.courseTimeMultiplier} onChange={(event) => onUpdate("courseTimeMultiplier", event.target.value)} /></label>
+            <label>入山地点<i className="source-badge yamareco">YAMARECO</i><input aria-invalid={!plan.entryPoint} value={plan.entryPoint} onChange={(event) => onUpdate("entryPoint", event.target.value)} /></label>
+            <label>入山時刻<i className="source-badge yamareco">YAMARECO</i><input aria-invalid={!plan.entryTime} value={plan.entryTime} onChange={(event) => onUpdate("entryTime", event.target.value)} /></label>
+            <label>下山地点<i className="source-badge yamareco">YAMARECO</i><input aria-invalid={!plan.exitPoint} value={plan.exitPoint} onChange={(event) => onUpdate("exitPoint", event.target.value)} /></label>
+            <label>下山時刻<i className="source-badge yamareco">YAMARECO</i><input aria-invalid={!plan.exitTime} value={plan.exitTime} onChange={(event) => onUpdate("exitTime", event.target.value)} /></label>
           </div>
-          <label className="manual-field">山行目的 <span>手動入力</span><input value={plan.purpose} onChange={(event) => onUpdate("purpose", event.target.value)} /></label>
           <div className="editor-grid">
-            <label className="manual-field">集合 <span>手動入力</span><input value={plan.meeting} onChange={(event) => onUpdate("meeting", event.target.value)} /></label>
-            <label className="manual-field">解散 <span>手動入力</span><input value={plan.dismissal} onChange={(event) => onUpdate("dismissal", event.target.value)} /></label>
-          </div>
-          <div className="editor-grid">
-            <label>入山地点 <em className="source-badge yamareco">ヤマレコ</em><input value={plan.entryPoint} onChange={(event) => onUpdate("entryPoint", event.target.value)} /></label>
-            <label>下山地点 <em className="source-badge yamareco">ヤマレコ</em><input value={plan.exitPoint} onChange={(event) => onUpdate("exitPoint", event.target.value)} /></label>
-          </div>
-          <div className="editor-grid">
-            <label>入山時刻 <em className="source-badge yamareco">ヤマレコ</em><input inputMode="numeric" placeholder="7/11(土) 11:00" value={plan.entryTime} onChange={(event) => onUpdate("entryTime", event.target.value)} /></label>
-            <label>下山時刻 <em className="source-badge yamareco">ヤマレコ</em><input inputMode="numeric" placeholder="7/13(月) 16:00" value={plan.exitTime} onChange={(event) => onUpdate("exitTime", event.target.value)} /></label>
+            <label className="manual-field">集合<i className="source-badge manual">MANUAL</i><input value={plan.meeting} onChange={(event) => onUpdate("meeting", event.target.value)} /></label>
+            <label className="manual-field">解散<i className="source-badge manual">MANUAL</i><input value={plan.dismissal} onChange={(event) => onUpdate("dismissal", event.target.value)} /></label>
           </div>
         </section>
 
-        <section className="editor-section" id="section-route">
-          <div className="section-title"><span>02</span><div><h2>日別ルート <em className="source-badge yamareco">ヤマレコ</em></h2><p>主要地点を日ごとに整理し、時刻は5分単位</p></div></div>
-          <label className="schedule-field">日別行程 <span>起床・就寝時刻は手動入力</span><textarea aria-invalid={!plan.schedule.some(Boolean)} aria-required="true" value={listValue(plan.schedule)} onChange={(event) => onUpdate("schedule", toScheduleList(event.target.value))} /></label>
+        <section className="editor-section" id="route">
+          <div className="section-title"><span>02</span><div><h2>日別行程</h2><p>水場は 💧、トイレは 🚻 を付けて抽出しています。起床・就寝はWord用の手動時刻として残します。</p></div></div>
+          <label className="schedule-field">行動予定<i className="source-badge yamareco">YAMARECO</i><textarea aria-invalid={!plan.schedule.length} value={listValue(plan.schedule)} onChange={(event) => onUpdate("schedule", toScheduleList(event.target.value))} /></label>
           <div className="editor-grid">
-            <label>コースタイム倍率 <em className="source-badge yamareco">ヤマレコ</em><input value={plan.courseTimeMultiplier} onChange={(event) => onUpdate("courseTimeMultiplier", event.target.value)} /></label>
-            <label>初日の日の入り時刻 <em className="source-badge yamareco">ヤマレコ</em><input value={plan.sunset} onChange={(event) => onUpdate("sunset", event.target.value)} /></label>
+            <label>初日の日の入り<i className="source-badge hybrid">AI/Web</i><input value={plan.sunset} onChange={(event) => onUpdate("sunset", event.target.value)} /></label>
+            {scheduleDayCount > 1 ? <label>日の出<i className="source-badge hybrid">AI/Web</i><input value={plan.sunrise} onChange={(event) => onUpdate("sunrise", event.target.value)} /></label> : null}
           </div>
-          {scheduleDayCount > 1 ? <label>日の出時刻 <em className="source-badge web">日の出時刻を検索</em><input value={plan.sunrise} onChange={(event) => onUpdate("sunrise", event.target.value)} /></label> : null}
-          <SourceLinks sources={plan.sources} prefixes={["日の出", "日の入り"]} />
         </section>
 
-        <section className="editor-section" id="section-access">
-          <div className="section-title"><span>03</span><div><h2>交通・宿泊</h2><p>新宿起点の交通と、宿泊施設の予約・料金・水場条件</p></div></div>
-          <div className="field-title-row"><strong>交通機関 <em className="source-badge web">交通経路・運賃を検索</em></strong><a href="https://www.navitime.co.jp/transfer/" rel="noreferrer" target="_blank">NAVITIMEで確認<ExternalLink size={13} /></a></div>
-          <label className={!plan.transport.trim() ? "manual-field field-without-title" : "field-without-title"}><textarea aria-label="交通機関" aria-invalid={!plan.transport.trim()} aria-required="true" value={plan.transport} onChange={(event) => updateTransport(event.target.value)} /></label>
+        <section className="editor-section" id="web">
+          <div className="section-title"><span>03</span><div><h2>Web検索で補完</h2><p>交通、宿泊、時刻表など、ヤマレコだけでは足りない公開情報です。</p></div></div>
+          <label>交通<i className="source-badge web">WEB</i><textarea aria-invalid={!plan.transport} value={plan.transport} onChange={(event) => updateTransport(event.target.value)} /></label>
           {budgetRecalculating ? <p className="inline-status"><LoaderCircle className="spin" size={14} />変更した交通経路から費用を再計算中</p> : null}
-          <SourceLinks sources={plan.sources} prefixes={["交通", "予算"]} />
-          <label className={!plan.lodging.trim() ? "manual-field" : ""}>テント場・山小屋 <em className="source-badge web">予約・料金・水場を検索</em><textarea aria-invalid={!plan.lodging.trim()} aria-required="true" value={plan.lodging} onChange={(event) => onUpdate("lodging", event.target.value)} /></label>
-          <a className="reference-tool-link" href="https://yamagoya-mirumiru.korokoro-dev.jp/" rel="noreferrer" target="_blank">山小屋みるみるで予約状況を確認<ExternalLink size={13} /></a>
-          <SourceLinks sources={[...plan.sources, ...plan.lodgingLinks.map((item) => ({ ...item, title: `宿泊：${item.title}` }))]} prefixes={["宿泊", "山小屋"]} />
-          {plan.lodgingLinks.length > 0 ? <div className="lodging-links"><strong>宿泊施設の公式ページ</strong>{plan.lodgingLinks.map((item) => <a href={item.url} key={item.url} rel="noreferrer" target="_blank">{item.title}<ExternalLink size={14} /></a>)}</div> : <p className="manual-link-note">公式URLが取得できなかった場合は、施設名で公式サイトを確認してください。</p>}
-          <label>バス時刻表 <em className="source-badge web">往路・復路を判定</em><span>鉄道は不要／利用するバスのみ</span><textarea value={listValue(plan.timetables)} onChange={(event) => onUpdate("timetables", toList(event.target.value))} /></label>
-          <ScreenshotPicker
-            files={timetableImages}
-            label="必要なバス時刻表画像"
-            multiple
-            onFiles={(files) => setTimetableImages((current) => [...current, ...files])}
-            onRemove={(index) => setTimetableImages((current) => current.filter((_, itemIndex) => itemIndex !== index))}
-          />
+          <a className="reference-tool-link" href="https://www.navitime.co.jp/transfer/" rel="noreferrer" target="_blank">NAVITIMEで確認<ExternalLink size={12} /></a>
+          <label>宿泊・山小屋<i className="source-badge web">WEB</i><textarea aria-invalid={!plan.lodging} value={plan.lodging} onChange={(event) => onUpdate("lodging", event.target.value)} /></label>
+          <a className="reference-tool-link" href="https://yamagoya-mirumiru.korokoro-dev.jp/" rel="noreferrer" target="_blank">山小屋みるみるで予約状況を確認<ExternalLink size={12} /></a>
+          <label>バス時刻表<i className="source-badge web">WEB</i><textarea value={listValue(plan.timetables)} onChange={(event) => onUpdate("timetables", toList(event.target.value))} /></label>
+          {timetableCitationLinks.length ? (
+            <div className="inline-citation-list" aria-label="バス時刻表の引用リンク">
+              {timetableCitationLinks.map((citation) => (
+                <span className="inline-citation" key={citation.key}>
+                  <strong>{citation.direction}</strong>
+                  <a href={citation.url} rel="noreferrer" target="_blank">{citation.label}<ExternalLink size={12} /></a>
+                </span>
+              ))}
+            </div>
+          ) : null}
         </section>
 
-        <section className="editor-section" id="section-budget">
-          <div className="section-title"><span>04</span><div><h2>予算・関係諸機関</h2><p>交通費・宿泊費・連絡先を公式情報から確認</p></div></div>
-          <EditablePlanTable
-            caption="予算"
-            headers={["項目", "金額", "備考"]}
-            rows={plan.budgetItems}
-            onChange={(rows) => onUpdate("budgetItems", rows)}
-          />
-          <SourceLinks sources={plan.sources} prefixes={["予算", "関係諸機関", "病院", "山小屋"]} />
-          <EditablePlanTable
-            caption="関係諸機関"
-            headers={["項目", "名称", "連絡先"]}
-            lockedFirstColumn
-            rows={plan.relatedOrganizations}
-            onChange={(rows) => onUpdate("relatedOrganizations", rows)}
-          />
+        <section className="editor-section" id="tables">
+          <div className="section-title"><span>04</span><div><h2>表に入る抽出項目</h2><p>Wordでは同じ項目セルを結合して出力します。画面では編集しやすい行形式にしています。</p></div></div>
+          <div className="editable-table-wrap">
+            <h3>予算</h3>
+            <div className="editable-table-scroll"><table className="editable-table"><thead><tr><th>項目</th><th>金額</th><th>備考</th></tr></thead><tbody>
+              {Array.from({ length: 6 }).map((_, rowIndex) => {
+                const cells = pipeCells(plan.budgetItems[rowIndex] ?? "", 3);
+                const itemSpan = categoryCellSpan(plan.budgetItems, rowIndex);
+                return <tr key={`budget-${rowIndex}`}>
+                  {itemSpan ? <th rowSpan={itemSpan}><input aria-label={`予算 ${rowIndex + 1}行目 項目`} value={cells[0]} onChange={(event) => updateBudgetCell(rowIndex, 0, event.target.value)} /></th> : null}
+                  <td><input aria-label={`予算 ${rowIndex + 1}行目 金額`} value={cells[1]} onChange={(event) => updateBudgetCell(rowIndex, 1, event.target.value)} /></td>
+                  <td><input aria-label={`予算 ${rowIndex + 1}行目 備考`} value={cells[2]} onChange={(event) => updateBudgetCell(rowIndex, 2, event.target.value)} /></td>
+                </tr>;
+              })}
+            </tbody></table></div>
+          </div>
+          <div className="editable-table-wrap">
+            <h3>関係諸機関</h3>
+            <div className="editable-table-scroll"><table className="editable-table"><thead><tr><th>項目</th><th>名称</th><th>連絡先</th></tr></thead><tbody>
+              {displayedOrganizations.map(({ row, index }, rowIndex) => {
+                const cells = pipeCells(row, 3);
+                const itemSpan = categoryCellSpan(displayedOrganizationRows, rowIndex);
+                return <tr key={`organization-${index}`}>
+                  {itemSpan ? <th rowSpan={itemSpan}><input aria-label={`関係諸機関 ${rowIndex + 1}行目 項目`} value={cells[0]} onChange={(event) => updateOrganizationCell(index, 0, event.target.value)} /></th> : null}
+                  <td><input aria-label={`関係諸機関 ${rowIndex + 1}行目 名称`} value={cells[1]} onChange={(event) => updateOrganizationCell(index, 1, event.target.value)} /></td>
+                  <td><input aria-label={`関係諸機関 ${rowIndex + 1}行目 連絡先`} value={cells[2]} onChange={(event) => updateOrganizationCell(index, 2, event.target.value)} /></td>
+                </tr>;
+              })}
+            </tbody></table></div>
+          </div>
         </section>
 
-        <section className="editor-section" id="section-map">
-          <div className="section-title"><span>05</span><div><h2>概念図 <em className="source-badge yamareco">ヤマレコ</em></h2><p>ルート全体を画像で確認し、Wordへ貼付</p></div></div>
-          {plan.routeMapUrl ? <a className="route-map-link" href={plan.routeMapUrl} rel="noreferrer" target="_blank">ヤマレコでルートを開いてスクリーンショットを撮る<ExternalLink size={15} /></a> : null}
-          <ScreenshotPicker
-            files={routeMapImage ? [routeMapImage] : []}
-            label="ルート全体の概念図画像"
-            onFiles={(files) => onRouteMapImageChange(files[0] ?? null)}
-            onRemove={() => onRouteMapImageChange(null)}
-          />
+        <section className="editor-section" id="images">
+          <div className="section-title"><span>05</span><div><h2>Wordへ貼る画像</h2><p>概念図とバス時刻表のスクリーンショットをここで差し替えできます。</p></div></div>
+          {plan.routeMapUrl ? <a className="route-map-link" href={plan.routeMapUrl} rel="noreferrer" target="_blank">ヤマレコでルートを開く<ExternalLink size={14} /></a> : null}
+          <ScreenshotPicker files={routeMapImage ? [routeMapImage] : []} label="ルート全体の概念図画像" onFiles={(files) => onRouteMapImageChange(files[0] ?? null)} onRemove={() => onRouteMapImageChange(null)} />
+          <ScreenshotPicker files={timetableImages} label="必要なバス時刻表画像" multiple onFiles={(files) => setTimetableImages((current) => [...current, ...files])} onRemove={(index) => setTimetableImages((current) => current.filter((_, itemIndex) => itemIndex !== index))} />
         </section>
+        <button className="back-to-top-button" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })} type="button">
+          一番上に戻る
+        </button>
       </article>
       {previewDocument ? <WordPreview document={previewDocument} onClose={() => setPreviewDocument(null)} /> : null}
     </section>
-  );
-}
-
-function SourceLinks({ sources, prefixes }: { sources: Source[]; prefixes: string[] }) {
-  const filtered = sources.filter((source) => prefixes.some((prefix) => source.title.startsWith(prefix)));
-  if (!filtered.length) return null;
-  return <div className="field-source-links"><span>参照元</span>{filtered.map((source) => <a href={source.url} key={`${source.title}-${source.url}`} rel="noreferrer" target="_blank">{source.title}<ExternalLink size={12} /></a>)}</div>;
-}
-
-function EditablePlanTable({
-  caption,
-  headers,
-  rows,
-  lockedFirstColumn = false,
-  onChange,
-}: {
-  caption: string;
-  headers: string[];
-  rows: string[];
-  lockedFirstColumn?: boolean;
-  onChange: (rows: string[]) => void;
-}) {
-  function updateCell(rowIndex: number, columnIndex: number, value: string) {
-    const nextRows = [...rows];
-    const cells = (nextRows[rowIndex] ?? "").split(/[｜|]/).map((cell) => cell.trim());
-    while (cells.length < headers.length) cells.push("");
-    cells[columnIndex] = value.replace(/[｜|]/g, " ");
-    nextRows[rowIndex] = cells.slice(0, headers.length).join("｜");
-    onChange(nextRows);
-  }
-
-  return (
-    <div className="editable-table-wrap">
-      <h3>{caption}</h3>
-      <div className="editable-table-scroll">
-        <table className="editable-table">
-          <thead><tr>{headers.map((header) => <th key={header} scope="col">{header}</th>)}</tr></thead>
-          <tbody>
-            {rows.map((row, rowIndex) => {
-              const cells = row.split(/[｜|]/).map((cell) => cell.trim());
-              while (cells.length < headers.length) cells.push("");
-              return (
-                <tr className={cells.slice(1).every((cell) => !cell) ? "needs-manual" : ""} key={`${caption}-${rowIndex}`}>
-                  {cells.slice(0, headers.length).map((cell, columnIndex) => columnIndex === 0 && lockedFirstColumn
-                    ? <th key={columnIndex} scope="row">{cell}</th>
-                    : <td key={columnIndex}><input aria-label={`${caption} ${rowIndex + 1}行目 ${headers[columnIndex]}`} value={cell} onChange={(event) => updateCell(rowIndex, columnIndex, event.target.value)} /></td>)}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
   );
 }
 

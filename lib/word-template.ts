@@ -67,11 +67,99 @@ function getCell(document: Document, tableIndex: number, rowIndex: number, cellI
   return cell;
 }
 
+function directTableRows(table: Element) {
+  return Array.from(table.childNodes).filter((node) => node.nodeName === "w:tr") as Element[];
+}
+
+function directRowCells(row: Element) {
+  return Array.from(row.childNodes).filter((node) => node.nodeName === "w:tc") as Element[];
+}
+
 function clearCell(cell: Element) {
   const children = Array.from(cell.childNodes);
   for (const child of children) {
     if (child.nodeName !== "w:tcPr") cell.removeChild(child);
   }
+}
+
+function cellProperties(document: Document, cell: Element) {
+  let properties = Array.from(cell.childNodes).find((node) => node.nodeName === "w:tcPr") as Element | undefined;
+  if (!properties) {
+    properties = wordElement(document, "tcPr");
+    cell.insertBefore(properties, cell.firstChild);
+  }
+  return properties;
+}
+
+function removeVerticalMerge(cell: Element) {
+  const properties = Array.from(cell.childNodes).find((node) => node.nodeName === "w:tcPr") as Element | undefined;
+  if (!properties) return;
+  for (const child of Array.from(properties.childNodes)) {
+    if (child.nodeName === "w:vMerge") properties.removeChild(child);
+  }
+}
+
+function setVerticalMerge(document: Document, cell: Element, mode: "restart" | "continue") {
+  const properties = cellProperties(document, cell);
+  removeVerticalMerge(cell);
+  const merge = wordElement(document, "vMerge");
+  merge.setAttributeNS(WORD_NS, "w:val", mode);
+  properties.appendChild(merge);
+}
+
+function setCellBorder(document: Document, cell: Element, edge: "top" | "bottom", value: "single" | "nil") {
+  const properties = cellProperties(document, cell);
+  let borders = Array.from(properties.childNodes).find((node) => node.nodeName === "w:tcBorders") as Element | undefined;
+  if (!borders) {
+    borders = wordElement(document, "tcBorders");
+    properties.appendChild(borders);
+  }
+  for (const child of Array.from(borders.childNodes)) {
+    if (child.nodeName === `w:${edge}`) borders.removeChild(child);
+  }
+  const border = wordElement(document, edge);
+  border.setAttributeNS(WORD_NS, "w:val", value);
+  if (value === "single") {
+    border.setAttributeNS(WORD_NS, "w:sz", "4");
+    border.setAttributeNS(WORD_NS, "w:color", "000000");
+  }
+  borders.appendChild(border);
+}
+
+function cellGridSpan(cell: Element) {
+  return Number(cell.getElementsByTagName("w:gridSpan").item(0)?.getAttribute("w:val") ?? "1") || 1;
+}
+
+function cellWidth(cell: Element) {
+  return Number(cell.getElementsByTagName("w:tcW").item(0)?.getAttribute("w:w") ?? "0") || 0;
+}
+
+function setCellGridSpan(document: Document, cell: Element, span: number, width: number) {
+  const properties = cellProperties(document, cell);
+  for (const child of Array.from(properties.childNodes)) {
+    if (child.nodeName === "w:gridSpan" || child.nodeName === "w:tcW") properties.removeChild(child);
+  }
+  const tcW = wordElement(document, "tcW");
+  tcW.setAttributeNS(WORD_NS, "w:w", String(width));
+  tcW.setAttributeNS(WORD_NS, "w:type", "dxa");
+  properties.appendChild(tcW);
+  const gridSpan = wordElement(document, "gridSpan");
+  gridSpan.setAttributeNS(WORD_NS, "w:val", String(span));
+  properties.appendChild(gridSpan);
+}
+
+function expandCellAcrossFollowingCells(document: Document, tableIndex: number, rowIndex: number, cellIndex: number, followingCount: number) {
+  const table = document.getElementsByTagName("w:tbl").item(tableIndex);
+  const row = table ? directTableRows(table)[rowIndex] : undefined;
+  const cells = row ? directRowCells(row) : [];
+  const target = cells[cellIndex];
+  if (!row || !target) throw new Error(`テンプレートの表セルが見つかりません (${tableIndex}/${rowIndex}/${cellIndex})`);
+  const mergedCells = cells.slice(cellIndex, cellIndex + followingCount + 1);
+  const span = mergedCells.reduce((total, cell) => total + cellGridSpan(cell), 0);
+  const width = mergedCells.reduce((total, cell) => total + cellWidth(cell), 0);
+  for (const cell of mergedCells.slice(1)) row.removeChild(cell);
+  setCellGridSpan(document, target, span, width);
+  return target;
 }
 
 function appendParagraph(document: Document, cell: Element, text: string, bold = false) {
@@ -110,6 +198,7 @@ function appendHyperlink(document: Document, paragraph: Element, label: string, 
 function setCell(document: Document, table: number, row: number, cell: number, value: string | string[]) {
   const target = getCell(document, table, row, cell);
   clearCell(target);
+  removeVerticalMerge(target);
   const lines = Array.isArray(value) ? value : value.split("\n");
   for (const line of lines.length ? lines : [""]) appendParagraph(document, target, line);
 }
@@ -117,8 +206,49 @@ function setCell(document: Document, table: number, row: number, cell: number, v
 function setCellHyperlink(document: Document, relations: Document, table: number, row: number, cell: number, label: string, url: string) {
   const target = getCell(document, table, row, cell);
   clearCell(target);
+  removeVerticalMerge(target);
   const paragraph = appendParagraph(document, target, "");
   appendHyperlink(document, paragraph, label, addExternalRelationship(relations, url));
+}
+
+function setCellTitleWithUrl(document: Document, relations: Document, table: number, row: number, cell: number, title: string, url: string) {
+  const target = getCell(document, table, row, cell);
+  clearCell(target);
+  removeVerticalMerge(target);
+  const titleParagraph = appendParagraph(document, target, "");
+  appendHyperlink(document, titleParagraph, title, addExternalRelationship(relations, url));
+}
+
+function setMergedCell(
+  document: Document,
+  table: number,
+  row: number,
+  cell: number,
+  value: string,
+  mode: "restart" | "continue",
+  borders: { hideTop?: boolean; hideBottom?: boolean } = {},
+) {
+  const target = getCell(document, table, row, cell);
+  clearCell(target);
+  setVerticalMerge(document, target, mode);
+  if (borders.hideTop) setCellBorder(document, target, "top", "nil");
+  if (borders.hideBottom) setCellBorder(document, target, "bottom", "nil");
+  appendParagraph(document, target, mode === "restart" ? value : "");
+}
+
+function yamarecoPlanUrl(sources: Link[]) {
+  return sources.find((source) => {
+    try {
+      const url = new URL(source.url);
+      return /ヤマレコ/.test(source.title) && (url.hostname === "yamareco.com" || url.hostname.endsWith(".yamareco.com"));
+    } catch {
+      return false;
+    }
+  })?.url ?? "";
+}
+
+function extractHttpsUrls(value: string) {
+  return [...value.matchAll(/https:\/\/[^\s｜|、）)]+/g)].map((match) => match[0]);
 }
 
 function splitScheduleDays(lines: string[]) {
@@ -133,8 +263,8 @@ function splitScheduleDays(lines: string[]) {
 }
 
 function appendScheduleParagraph(document: Document, cell: Element, text: string) {
-  const paragraph = appendParagraph(document, cell, /^(?:＜|起床時刻|就寝時刻)/.test(text) ? text : text, /^＜/.test(text));
-  if (/^(?:起床|就寝)時刻\s*[:：]/.test(text)) {
+  const paragraph = appendParagraph(document, cell, text, /^＜/.test(text));
+  if (/^(?:(?:起床|就寝)時刻\s*[:：]|00:00\s+(?:起床|就寝))$/.test(text)) {
     const run = paragraph.getElementsByTagName("w:r").item(0);
     if (run) {
       let properties = run.getElementsByTagName("w:rPr").item(0);
@@ -149,8 +279,16 @@ function appendScheduleParagraph(document: Document, cell: Element, text: string
   }
 }
 
+function appendTableBorder(document: Document, borders: Element, name: string) {
+  const border = wordElement(document, name);
+  border.setAttributeNS(WORD_NS, "w:val", "single");
+  border.setAttributeNS(WORD_NS, "w:sz", "6");
+  border.setAttributeNS(WORD_NS, "w:color", "B7B7B7");
+  borders.appendChild(border);
+}
+
 function setScheduleColumns(document: Document, lines: string[]) {
-  const target = getCell(document, 0, 5, 1);
+  const target = expandCellAcrossFollowingCells(document, 0, 5, 1, 1);
   clearCell(target);
   const groups = splitScheduleDays(lines);
   if (groups.length <= 1) {
@@ -161,24 +299,22 @@ function setScheduleColumns(document: Document, lines: string[]) {
   const table = wordElement(document, "tbl");
   const tableProperties = wordElement(document, "tblPr");
   const tableWidth = wordElement(document, "tblW");
-  tableWidth.setAttributeNS(WORD_NS, "w:w", "5400");
-  tableWidth.setAttributeNS(WORD_NS, "w:type", "dxa");
+  tableWidth.setAttributeNS(WORD_NS, "w:w", "5000");
+  tableWidth.setAttributeNS(WORD_NS, "w:type", "pct");
   tableProperties.appendChild(tableWidth);
   const layout = wordElement(document, "tblLayout");
   layout.setAttributeNS(WORD_NS, "w:type", "fixed");
   tableProperties.appendChild(layout);
   const borders = wordElement(document, "tblBorders");
-  const insideVertical = wordElement(document, "insideV");
-  insideVertical.setAttributeNS(WORD_NS, "w:val", "single");
-  insideVertical.setAttributeNS(WORD_NS, "w:sz", "6");
-  insideVertical.setAttributeNS(WORD_NS, "w:color", "B7B7B7");
-  borders.appendChild(insideVertical);
+  for (const borderName of ["top", "left", "bottom", "right", "insideH", "insideV"]) {
+    appendTableBorder(document, borders, borderName);
+  }
   tableProperties.appendChild(borders);
   table.appendChild(tableProperties);
   const grid = wordElement(document, "tblGrid");
   for (let index = 0; index < 2; index += 1) {
     const column = wordElement(document, "gridCol");
-    column.setAttributeNS(WORD_NS, "w:w", "2700");
+    column.setAttributeNS(WORD_NS, "w:w", "2500");
     grid.appendChild(column);
   }
   table.appendChild(grid);
@@ -189,8 +325,8 @@ function setScheduleColumns(document: Document, lines: string[]) {
       const cell = wordElement(document, "tc");
       const properties = wordElement(document, "tcPr");
       const width = wordElement(document, "tcW");
-      width.setAttributeNS(WORD_NS, "w:w", "2700");
-      width.setAttributeNS(WORD_NS, "w:type", "dxa");
+      width.setAttributeNS(WORD_NS, "w:w", "2500");
+      width.setAttributeNS(WORD_NS, "w:type", "pct");
       properties.appendChild(width);
       cell.appendChild(properties);
       const group = groups[rowIndex * 2 + columnIndex] ?? [];
@@ -220,8 +356,54 @@ function splitColumns(value: string) {
   return value.split(/[｜|]/).map((part) => part.trim());
 }
 
+function categoryMergeSpan(values: string[], rowIndex: number) {
+  const [item = ""] = splitColumns(values[rowIndex] ?? "");
+  const [previous = ""] = splitColumns(values[rowIndex - 1] ?? "");
+  if (!item || previous === item) return 0;
+  let span = 1;
+  for (let index = rowIndex + 1; index < values.length; index += 1) {
+    const [nextItem = ""] = splitColumns(values[index] ?? "");
+    if (nextItem && nextItem !== item) break;
+    span += 1;
+  }
+  return span;
+}
+
+function isCategoryMergeContinuation(values: string[], rowIndex: number) {
+  const [item = ""] = splitColumns(values[rowIndex] ?? "");
+  const [previous = ""] = splitColumns(values[rowIndex - 1] ?? "");
+  if (item) return item === previous;
+  for (let index = rowIndex - 1; index >= 0; index -= 1) {
+    const [previousItem = ""] = splitColumns(values[index] ?? "");
+    if (previousItem) return categoryMergeSpan(values, index) > rowIndex - index;
+  }
+  return false;
+}
+
+function normalizeBudgetLabel(item: string, note: string) {
+  const transportDetail = item.match(/^交通費\s*[（(［\[]?\s*(鉄道|電車|JR|バス)\s*[）)\］\]]?$/);
+  if (!transportDetail) return { item, note };
+  const detail = transportDetail[1] === "電車" ? "鉄道" : transportDetail[1];
+  return {
+    item: "交通費",
+    note: note.includes(detail) ? note : [detail, note].filter(Boolean).join("："),
+  };
+}
+
 function cleanManualMarker(value: string) {
   return value.replace(/^【手動編集】\s*/, "").trim();
+}
+
+function collapseDuplicateOrganizationLabels(values: string[]) {
+  const seen = new Set<string>();
+  return values.map((value) => {
+    const [item = "", name = "", contact = ""] = splitColumns(value);
+    if (!item || !seen.has(item)) {
+      if (item) seen.add(item);
+      return `${item}｜${name}｜${contact}`;
+    }
+    return `｜${name}｜${contact}`;
+  });
 }
 
 function nextRelationshipId(relations: Document) {
@@ -344,6 +526,24 @@ function appendImagesAfterBodyParagraph(zip: PizZip, document: Document, relatio
   });
 }
 
+function appendLinksAfterBodyParagraph(document: Document, relations: Document, label: string, urls: string[]) {
+  if (!urls.length) return;
+  const body = document.getElementsByTagName("w:body").item(0);
+  if (!body) return;
+  const anchor = Array.from(body.childNodes).find((node) =>
+    node.nodeName === "w:p" && Array.from((node as Element).getElementsByTagName("w:t"))
+      .some((text) => (text.textContent ?? "").includes(label)),
+  );
+  if (!anchor) return;
+  let cursor: ChildNode = anchor;
+  for (const url of urls) {
+    const paragraph = wordElement(document, "p");
+    appendHyperlink(document, paragraph, url, addExternalRelationship(relations, url));
+    body.insertBefore(paragraph, cursor.nextSibling);
+    cursor = paragraph;
+  }
+}
+
 export function fillWordTemplate(
   template: ArrayBuffer,
   plan: WordPlan,
@@ -359,7 +559,9 @@ export function fillWordTemplate(
   const relations = parser.parseFromString(relationsFile.asText(), "application/xml");
   if (document.getElementsByTagName("parsererror").length) throw new Error("Wordテンプレートの形式を解析できませんでした。");
 
-  setCell(document, 0, 0, 0, plan.title || "泊まり山行計画書");
+  const planUrl = yamarecoPlanUrl(plan.sources);
+  if (planUrl) setCellTitleWithUrl(document, relations, 0, 0, 0, plan.title || "泊まり山行計画書", planUrl);
+  else setCell(document, 0, 0, 0, plan.title || "泊まり山行計画書");
   setCell(document, 0, 1, 1, plan.dates);
   setCell(document, 0, 1, 3, plan.area);
   setCell(document, 0, 2, 1, plan.purpose);
@@ -377,29 +579,42 @@ export function fillWordTemplate(
   for (const line of notes) appendParagraph(document, notesCell, line);
   const transportLines = cleanManualMarker(plan.transport).split("\n").map((line) => line.trim()).filter(Boolean);
   transportLines.forEach((line, index) => appendParagraph(document, notesCell, `${index === 0 ? "交通：" : ""}${line}`));
-  for (const link of plan.lodgingLinks.filter((item) => /^https:\/\//.test(item.url))) {
-    const paragraph = appendParagraph(document, notesCell, "宿泊地URL：");
-    appendHyperlink(document, paragraph, link.title, addExternalRelationship(relations, link.url));
-  }
-  for (let index = 0; index < 6; index += 1) {
+  const budgetRows = Array.from({ length: 6 }, (_, index) => {
     const [item = "", rawAmount = "", rawNote = ""] = splitColumns(plan.budgetItems[index] ?? "");
+    const normalized = normalizeBudgetLabel(item, rawNote.replace(/1人分概算/g, "").trim());
+    return `${normalized.item}｜${rawAmount}｜${normalized.note}`;
+  });
+  for (let index = 0; index < budgetRows.length; index += 1) {
+    const [item = "", rawAmount = "", rawNote = ""] = splitColumns(budgetRows[index] ?? "");
     let amount = /^(?:0|0円|¥0|￥0)$/.test(rawAmount) ? "" : rawAmount;
-    const note = rawNote.replace(/1人分概算/g, "").trim();
-    if (/タクシー/.test(`${item}${note}`)) amount = "未定";
+    const normalized = { item, note: rawNote };
+    if (/タクシー/.test(`${normalized.item}${normalized.note}`)) amount = "未定";
     if (index === 5 && amount && !/[+＋]α$/.test(amount)) amount = `${amount}＋α`;
     if (index === 5 && !amount) amount = "＋α";
-    setCell(document, 5, index + 1, 1, item);
+    const itemSpan = categoryMergeSpan(budgetRows, index);
+    const continuesNext = isCategoryMergeContinuation(budgetRows, index + 1);
+    if (itemSpan > 1) setMergedCell(document, 5, index + 1, 1, normalized.item, "restart", { hideBottom: true });
+    else if (isCategoryMergeContinuation(budgetRows, index)) setMergedCell(document, 5, index + 1, 1, "", "continue", { hideTop: true, hideBottom: continuesNext });
+    else setCell(document, 5, index + 1, 1, normalized.item);
     setCell(document, 5, index + 1, 2, amount);
-    setCell(document, 5, index + 1, 3, note);
+    setCell(document, 5, index + 1, 3, normalized.note);
   }
 
-  ensureTableRows(document, 6, Math.max(15, plan.relatedOrganizations.length));
-  for (let index = 0; index < Math.max(15, plan.relatedOrganizations.length); index += 1) {
-    const [item = "", name = "", rawContact = ""] = splitColumns(plan.relatedOrganizations[index] ?? "");
+  const relatedOrganizations = collapseDuplicateOrganizationLabels(plan.relatedOrganizations);
+  const organizationRows = Array.from({ length: Math.max(15, relatedOrganizations.length) }, (_, index) => relatedOrganizations[index] ?? "");
+  ensureTableRows(document, 6, organizationRows.length);
+  let currentOrganizationItem = "";
+  for (let index = 0; index < organizationRows.length; index += 1) {
+    const [item = "", name = "", rawContact = ""] = splitColumns(organizationRows[index] ?? "");
+    if (item) currentOrganizationItem = item;
     const contact = rawContact && /\d/.test(rawContact)
       ? `TEL: ${rawContact.replace(/^TEL\s*[:：]\s*/i, "")}` : rawContact;
-    if (item) setCell(document, 6, index + 1, 1, item);
-    const hutLink = item === "山小屋" ? [...plan.lodgingLinks, ...plan.sources].find((link) => link.title.includes(name) && /^https:\/\//.test(link.url)) : undefined;
+    const itemSpan = categoryMergeSpan(organizationRows, index);
+    const continuesNext = isCategoryMergeContinuation(organizationRows, index + 1);
+    if (itemSpan > 1) setMergedCell(document, 6, index + 1, 1, item, "restart", { hideBottom: true });
+    else if (isCategoryMergeContinuation(organizationRows, index)) setMergedCell(document, 6, index + 1, 1, "", "continue", { hideTop: true, hideBottom: continuesNext });
+    else setCell(document, 6, index + 1, 1, item);
+    const hutLink = currentOrganizationItem === "山小屋" ? [...plan.lodgingLinks, ...plan.sources].find((link) => link.title.includes(name) && /^https:\/\//.test(link.url)) : undefined;
     if (name && hutLink) setCellHyperlink(document, relations, 6, index + 1, 2, name, hutLink.url);
     else setCell(document, 6, index + 1, 2, name);
     setCell(document, 6, index + 1, 3, contact);
@@ -408,6 +623,7 @@ export function fillWordTemplate(
   setScheduleColumns(document, plan.schedule);
 
   appendImagesAfterBodyParagraph(zip, document, relations, "〈概念図〉", images.routeMap ? [images.routeMap] : [], "route-map");
+  appendLinksAfterBodyParagraph(document, relations, "〈時刻表など〉", [...new Set(plan.timetables.flatMap(extractHttpsUrls))]);
   appendImagesAfterBodyParagraph(zip, document, relations, "〈時刻表など〉", images.timetables ?? [], "timetable");
 
   const serializer = new XMLSerializer();

@@ -68,7 +68,7 @@ test("returns every public-information section required by the Word sample", asy
         <div class="item"><div class="time1">07:06</div><div class="name">妙高山北峰</div></div>
         <div class="item"><div class="time1">09:01</div><div class="name">黒沢池ヒュッテ</div></div>
         <div class="item"><div class="time1">10:11</div><div class="name">茶臼山</div></div>
-        <div class="item"><div class="time1">10:39</div><div class="name">高谷池ヒュッテ</div></div>
+        <div class="item"><span class="toilet_o"></span><div class="time1">10:39</div><div class="name">三国小屋</div></div>
         <div class="item"><div class="time1">12:34</div><div class="name">火打山</div></div>
         <div class="item"><div class="time1">14:01</div><div class="name">高谷池ヒュッテ</div></div>
         <div class="item"><div class="time1">16:54</div><div class="name">笹ケ峰登山口</div></div>
@@ -121,23 +121,32 @@ test("returns every public-information section required by the Word sample", asy
   assert.equal(plan.title, "20260718-19 パノラマ銀座 計画書");
   assert.equal(plan.dates, "2026年07月18日(土) ～ 2026年07月19日(日)");
   assert.equal(plan.area, "妙高・戸隠・雨飾");
-  assert.ok(plan.schedule.every((line) => !line || /^＜\d+日目 \d+\/\d+\([日月火水木金土]\)＞$/.test(line) || /^(?:起床|就寝)時刻：$/.test(line) || /^\d{2}:\d{2} \S/.test(line)));
+  assert.ok(plan.schedule.every((line) => !line || /^＜\d+日目 \d+\/\d+\([日月火水木金土]\)＞$/.test(line) || /^\d{2}:\d{2} \S/.test(line)));
   assert.equal(plan.schedule[0], "＜1日目 7/18(土)＞");
   assert.ok(plan.schedule.includes("＜2日目 7/19(日)＞"));
   assert.ok(plan.schedule.includes("11:00 笹ケ峰登山口 🚻"));
   assert.ok(plan.schedule.includes("15:20 黒沢池ヒュッテ 💧"));
   assert.ok(plan.schedule.includes("06:35 妙高山北峰"));
+  assert.ok(plan.schedule.includes("10:40 三国小屋 🚻"));
   assert.ok(plan.schedule.includes("12:35 火打山"));
   assert.ok(plan.schedule.includes("16:55 笹ケ峰登山口"));
-  assert.ok(plan.schedule.includes("起床時刻："));
-  assert.ok(plan.schedule.includes("就寝時刻："));
+  assert.ok(plan.schedule.includes("00:00 起床"));
+  assert.ok(plan.schedule.includes("00:00 就寝"));
   assert.equal(plan.entryTime, "7/18(土) 11:00");
   assert.equal(plan.exitTime, "7/19(日) 16:55");
   assert.equal(plan.purpose, "");
   assert.equal(plan.budgetItems.length, 6);
   assert.equal(plan.relatedOrganizations.length, 15);
-  assert.equal(plan.relatedOrganizations[0], "現地連絡先｜｜");
-  assert.equal(plan.relatedOrganizations.at(-1), "病院｜｜");
+  assert.equal(plan.relatedOrganizations[0], "現地連絡先｜｜TEL: ");
+  assert.equal(plan.relatedOrganizations[1], "顧問｜｜TEL: ");
+  assert.equal(plan.relatedOrganizations[2], "大学｜｜TEL: ");
+  assert.equal(plan.relatedOrganizations[3], "コーチ｜｜TEL: ");
+  assert.equal(plan.relatedOrganizations[9], "主将｜｜TEL: ");
+  assert.equal(plan.relatedOrganizations[10], "バス｜｜TEL: ");
+  assert.equal(plan.relatedOrganizations[11], "タクシー｜｜TEL: ");
+  assert.equal(plan.relatedOrganizations[12], "警察｜｜TEL: ");
+  assert.equal(plan.relatedOrganizations[13], "山小屋｜｜TEL: ");
+  assert.equal(plan.relatedOrganizations.at(-1), "病院｜｜TEL: ");
   assert.match(plan.budgetItems.at(-1), /＋α/);
   assert.ok(
     plan.routeMapUrl === yamarecoUrl || /showmap\.php\?plid=\d+/.test(plan.routeMapUrl),
@@ -185,7 +194,10 @@ test("falls back to web search instructions when Yamareco has no sunset", async 
   assert.match(route, /取得できていなければ、対象日と山域に対応する日の入り時刻/);
   assert.match(route, /非公開設定のため読み取れません/);
   assert.match(route, /yamagoya-mirumiru\.korokoro-dev\.jp/);
-  assert.match(route, /緊急時に連絡・避難する可能性がある全ての山小屋/);
+  assert.match(route, /実際には通行しない場合でも/);
+  assert.match(route, /緊急時に連絡・避難する可能性が少しでもある山小屋/);
+  assert.match(route, /山域名、主要経由地、尾根名、登山口名、分岐名を組み合わせて検索/);
+  assert.match(route, /管理者・予約窓口・連絡所のTEL/);
   assert.match(route, /取得済みヤマレコ行動予定/);
   assert.match(route, /全経由地点から日程、山域、入下山地点/);
   assert.match(route, /これらを調べるためのWeb検索は禁止/);
