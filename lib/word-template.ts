@@ -1,5 +1,10 @@
 import { DOMParser, XMLSerializer } from "@xmldom/xmldom";
 import PizZip from "pizzip";
+import type { Plan, Source } from "@/lib/plan-types";
+
+type Document = ReturnType<DOMParser["parseFromString"]>;
+type Element = ReturnType<Document["createElement"]>;
+type Node = NonNullable<Document["firstChild"]>;
 
 const WORD_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 const REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
@@ -10,40 +15,7 @@ const DRAWING_NS = "http://schemas.openxmlformats.org/drawingml/2006/main";
 const PICTURE_NS = "http://schemas.openxmlformats.org/drawingml/2006/picture";
 const WORD_DRAWING_NS = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
 
-type Link = { title: string; url: string };
-
-export type WordPlan = {
-  title: string;
-  dates: string;
-  area: string;
-  purpose: string;
-  meeting: string;
-  dismissal: string;
-  entryPoint: string;
-  entryTime: string;
-  exitPoint: string;
-  exitTime: string;
-  summary: string;
-  route: string;
-  schedule: string[];
-  courseTimeMultiplier: string;
-  sunset: string;
-  sunrise: string;
-  weather: string;
-  risks: string[];
-  transport: string;
-  lodging: string;
-  lodgingLinks: Link[];
-  waterSources: string[];
-  emergency: string;
-  emergencyEvacuation: string;
-  budgetItems: string[];
-  relatedOrganizations: string[];
-  conceptMap: string;
-  routeMapUrl: string;
-  timetables: string[];
-  sources: Link[];
-};
+export type WordPlan = Omit<Plan, "foodPlan" | "commonEquipment" | "personalEquipment">;
 
 export type WordImage = {
   bytes: Uint8Array;
@@ -236,11 +208,11 @@ function setMergedCell(
   appendParagraph(document, target, mode === "restart" ? value : "");
 }
 
-function yamarecoPlanUrl(sources: Link[]) {
+function yamarecoPlanUrl(sources: Source[]) {
   return sources.find((source) => {
     try {
       const url = new URL(source.url);
-      return /ヤマレコ/.test(source.title) && (url.hostname === "yamareco.com" || url.hostname.endsWith(".yamareco.com"));
+      return /(?:Yamareco|ヤマレコ)/i.test(source.title) && (url.hostname === "yamareco.com" || url.hostname.endsWith(".yamareco.com"));
     } catch {
       return false;
     }
@@ -408,6 +380,7 @@ function collapseDuplicateOrganizationLabels(values: string[]) {
 
 function nextRelationshipId(relations: Document) {
   const root = relations.documentElement;
+  if (!root) throw new Error("Wordテンプレートの関連情報を読み取れませんでした。");
   const ids = Array.from(relations.getElementsByTagName("Relationship"))
     .map((node) => node.getAttribute("Id") ?? "");
   let number = ids.length + 1;
@@ -448,7 +421,9 @@ function ensureImageContentType(zip: PizZip, image: WordImage) {
     const item = types.createElementNS("http://schemas.openxmlformats.org/package/2006/content-types", "Default");
     item.setAttribute("Extension", extension);
     item.setAttribute("ContentType", image.contentType);
-    types.documentElement.appendChild(item);
+    const root = types.documentElement;
+    if (!root) throw new Error("Wordテンプレートのコンテンツタイプ定義を読み取れませんでした。");
+    root.appendChild(item);
     zip.file("[Content_Types].xml", new XMLSerializer().serializeToString(types));
   }
 }
@@ -513,7 +488,7 @@ function appendImagesAfterBodyParagraph(zip: PizZip, document: Document, relatio
       .some((text) => (text.textContent ?? "").includes(label)),
   );
   if (!anchor) return;
-  let cursor: ChildNode = anchor;
+  let cursor: Node = anchor;
   images.forEach((image, index) => {
     const extension = image.extension === "jpeg" ? "jpg" : image.extension;
     const filename = `${prefix}-${index + 1}.${extension}`;
@@ -535,7 +510,7 @@ function appendLinksAfterBodyParagraph(document: Document, relations: Document, 
       .some((text) => (text.textContent ?? "").includes(label)),
   );
   if (!anchor) return;
-  let cursor: ChildNode = anchor;
+  let cursor: Node = anchor;
   for (const url of urls) {
     const paragraph = wordElement(document, "p");
     appendHyperlink(document, paragraph, url, addExternalRelationship(relations, url));

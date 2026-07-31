@@ -24,71 +24,18 @@ import {
   X,
 } from "lucide-react";
 import { type ClipboardEvent, type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
+import type { GenerateResponse, Plan, Source } from "@/lib/plan-types";
+import {
+  fetchPublicPlanTitle,
+  formatHistoryDate,
+  readUsageHistory,
+  refreshLegacyHistory,
+  upsertUsageHistory,
+  writeUsageHistory,
+  type UsageHistoryItem,
+} from "@/lib/usage-history";
 import { fillWordTemplate, type WordImage } from "@/lib/word-template";
 
-type Source = { title: string; url: string };
-type Plan = {
-  title: string;
-  dates: string;
-  area: string;
-  purpose: string;
-  meeting: string;
-  dismissal: string;
-  entryPoint: string;
-  entryTime: string;
-  exitPoint: string;
-  exitTime: string;
-  summary: string;
-  route: string;
-  schedule: string[];
-  courseTimeMultiplier: string;
-  sunset: string;
-  sunrise: string;
-  weather: string;
-  risks: string[];
-  transport: string;
-  lodging: string;
-  lodgingLinks: Source[];
-  waterSources: string[];
-  foodPlan: string[];
-  emergency: string;
-  emergencyEvacuation: string;
-  commonEquipment: string[];
-  personalEquipment: string[];
-  budgetItems: string[];
-  relatedOrganizations: string[];
-  conceptMap: string;
-  routeMapUrl: string;
-  timetables: string[];
-  sources: Source[];
-};
-
-type GenerateResponse = {
-  plan: Plan;
-  demoMode?: boolean;
-  warning?: string;
-  generatedImages?: {
-    routeMap?: {
-      contentType: string;
-      bytesBase64: string;
-      filename?: string;
-    };
-    timetables?: Array<{
-      contentType: string;
-      bytesBase64: string;
-      filename?: string;
-    }>;
-  };
-};
-
-type UsageHistoryItem = {
-  url: string;
-  title: string;
-  usedAt: string;
-};
-
-const USAGE_HISTORY_KEY = "yamareco-research-history";
-const MAX_USAGE_HISTORY = 12;
 const TEMPORARY_OPEN_REVIEW_WITHOUT_RETRIEVAL = true;
 
 const EMPTY_PLAN: Plan = {
@@ -255,7 +202,7 @@ function yamarecoPlanUrl(sources: Source[]) {
   return sources.find((source) => {
     try {
       const url = new URL(source.url);
-      return /ヤマレコ/.test(source.title) && (url.hostname === "yamareco.com" || url.hostname.endsWith(".yamareco.com"));
+      return /(?:Yamareco|ヤマレコ)/i.test(source.title) && (url.hostname === "yamareco.com" || url.hostname.endsWith(".yamareco.com"));
     } catch {
       return false;
     }
@@ -316,8 +263,8 @@ function buildTimetableCitations(rows: unknown) {
 }
 
 const PROGRESS_STAGES = [
-  { label: "ヤマレコを読み取り中", detail: "日程・ルート・山域を確認" },
-  { label: "Web検索中", detail: "交通・宿泊・日の入りを確認" },
+  { label: "Yamarecoを読み取り中", detail: "日程・ルート・山域を確認" },
+  { label: "Web検索中", detail: "交通・宿泊などの不足情報を確認" },
   { label: "情報を整理中", detail: "取得した公開情報を確認しやすく整形" },
 ];
 
@@ -338,36 +285,10 @@ function isYamarecoUrl(value: string) {
   }
 }
 
-function readUsageHistory() {
-  try {
-    const raw = window.localStorage.getItem(USAGE_HISTORY_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as UsageHistoryItem[];
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter((item) => item && typeof item.url === "string" && typeof item.title === "string" && typeof item.usedAt === "string")
-      .slice(0, MAX_USAGE_HISTORY);
-  } catch {
-    return [];
-  }
-}
-
-function writeUsageHistory(items: UsageHistoryItem[]) {
-  try {
-    window.localStorage.setItem(USAGE_HISTORY_KEY, JSON.stringify(items.slice(0, MAX_USAGE_HISTORY)));
-  } catch {
-    // 履歴保存に失敗しても、情報取得の本体は止めない。
-  }
-}
-
-function upsertUsageHistory(items: UsageHistoryItem[], item: UsageHistoryItem) {
-  return [item, ...items.filter((current) => current.url !== item.url)].slice(0, MAX_USAGE_HISTORY);
-}
-
-function temporaryReviewPlan(url: string) {
+function temporaryReviewPlan(url: string, title: string) {
   return normalizePlan({
-    title: "手入力用の山行情報",
-    sources: [{ title: "入力したヤマレコ", url }],
+    title: title || "名称未取得の山行情報",
+    sources: [{ title: "入力したYamareco", url }],
     routeMapUrl: url,
   });
 }
@@ -400,12 +321,18 @@ export default function Home() {
   }, [status]);
 
   useEffect(() => {
-    setUsageHistory(readUsageHistory());
+    const stored = readUsageHistory();
+    void Promise.resolve().then(() => setUsageHistory(stored));
+    void refreshLegacyHistory(stored).then((updated) => {
+      if (updated === stored) return;
+      setUsageHistory(updated);
+      writeUsageHistory(updated);
+    });
   }, []);
 
   async function generatePlan() {
     if (!validUrl) {
-      setError("ヤマレコの公開URLを確認してください。");
+      setError("Yamarecoの公開URLを確認してください。");
       return;
     }
     setError("");
@@ -414,11 +341,17 @@ export default function Home() {
     setElapsedMs(0);
     setGenerationDurationMs(0);
     if (TEMPORARY_OPEN_REVIEW_WITHOUT_RETRIEVAL) {
-      const normalized = temporaryReviewPlan(url);
+      let title = "";
+      try {
+        title = await fetchPublicPlanTitle(url);
+      } catch (reason) {
+        setNotice(reason instanceof Error ? reason.message : "計画名を取得できませんでした。");
+      }
+      const normalized = temporaryReviewPlan(url, title);
       setPlan(normalized);
       setRouteMapImage(null);
       setGeneratedTimetableImages([]);
-      setNotice("一時仕様として、情報取得を待たずに入力画面を開いています。");
+      if (title) setNotice("デモモード：計画名のみ取得し、確認画面を表示しています。");
       const nextHistory = upsertUsageHistory(usageHistory, {
         url,
         title: normalized.title,
@@ -449,7 +382,7 @@ export default function Home() {
       };
       if (data.generatedImages?.routeMap) setRouteMapImage(imageFile(data.generatedImages.routeMap, "route-map.png"));
       setGeneratedTimetableImages((data.generatedImages?.timetables ?? []).map((image, index) => imageFile(image, `timetable-${index + 1}.png`)));
-      setNotice(data.warning ?? (data.demoMode ? "Web検索は未設定です。ヤマレコから取得した内容を確認してください。" : ""));
+      setNotice(data.warning ?? (data.demoMode ? "Web検索は未設定です。Yamarecoから取得した内容を確認してください。" : ""));
       await new Promise((resolve) => window.setTimeout(resolve, 450));
       const durationMs = performance.now() - startedAt;
       setElapsedMs(durationMs);
@@ -489,12 +422,12 @@ export default function Home() {
   const activeStep = status === "review" ? 3 : status === "generating" ? 2 : 1;
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${status === "review" ? "review-mode" : ""}`}>
       <a className="skip-link" href="#main-content">本文へ移動</a>
       <header className="topbar">
-        <a className="brand" href="#top" aria-label="YAMARECO RESEARCH トップ">
+        <a className="brand" href="#top" aria-label="YAMARECO PLAN BUILDER トップ">
           <span className="brand-mark"><Route size={25} strokeWidth={2.2} /></span>
-          <span className="brand-copy"><strong>YAMARECO RESEARCH</strong></span>
+          <span className="brand-copy"><strong>YAMARECO PLAN BUILDER</strong><small>AI POWERED</small></span>
         </a>
       </header>
 
@@ -531,14 +464,14 @@ export default function Home() {
         ) : (
           <section className="workspace">
             <article className="card input-card">
-              <div className="eyebrow"><Search size={18} />YAMARECO / WEB RESEARCH</div>
-              <h1><span>山行情報を</span><br />代わりに取得</h1>
-              <p className="lead">ヤマレコとWeb検索で分かる公開情報を集めて、確認しやすく整理します。</p>
+              <div className="eyebrow"><Search size={18} />AI-POWERED PLANNING</div>
+              <h1>Yamareco Plan Builder</h1>
+              <p className="lead">AIがYamarecoとWebを調査し、公開情報を確認しやすい山行計画へ整理します。</p>
 
               <div className="creation-flow" aria-label="公開情報の取得フロー">
                 <div className="flow-card flow-sources">
                   <small>01</small>
-                  <strong><Share2 size={21} />ヤマレコのURL</strong>
+                  <strong><Share2 size={21} />YamarecoのURL</strong>
                 </div>
                 <span className="flow-arrow" aria-hidden="true"><ArrowRight size={20} /></span>
                 <div className="flow-card">
@@ -548,11 +481,11 @@ export default function Home() {
                 <span className="flow-arrow" aria-hidden="true"><ArrowRight size={20} /></span>
                 <div className="flow-card flow-output">
                   <small>03</small>
-                  <strong><FileText size={21} />抽出結果を確認</strong>
+                  <strong><FileText size={21} />AIが計画に整理</strong>
                 </div>
               </div>
 
-              <label htmlFor="yamareco-url">ヤマレコの公開URL</label>
+              <label htmlFor="yamareco-url">Yamarecoの公開URL</label>
               <div className="url-row">
                 <div className={`input-wrap ${url ? (validUrl ? "valid" : "invalid") : ""}`}>
                   <Link2 size={21} />
@@ -574,7 +507,7 @@ export default function Home() {
                 </div>
               </div>
               <p className={`helper url-status ${url ? (validUrl ? "valid" : "invalid") : ""}`} id="url-status" aria-live="polite">
-                {!url ? "入力すると自動でヤマレコURLを判定します。" : validUrl ? "✓ Verified" : "ヤマレコの公開URLではありません。"}
+                {!url ? "入力すると自動でYamareco URLを判定します。" : validUrl ? "✓ Verified" : "Yamarecoの公開URLではありません。"}
               </p>
 
               <section className="usage-history">
@@ -585,7 +518,7 @@ export default function Home() {
                   type="button"
                 >
                   <Clock3 size={17} />
-                  使った履歴
+                  履歴
                   <span>{usageHistory.length}件</span>
                 </button>
                 {historyOpen ? (
@@ -593,7 +526,7 @@ export default function Home() {
                     {usageHistory.length ? (
                       <>
                         <div className="history-panel-head">
-                          <strong>最近使ったヤマレコ</strong>
+                          <strong>最近使ったYamareco</strong>
                           <button onClick={clearUsageHistory} type="button">履歴を消去</button>
                         </div>
                         <ul>
@@ -607,7 +540,7 @@ export default function Home() {
                                 type="button"
                               >
                                 <strong>{item.title}</strong>
-                                <span>{new Date(item.usedAt).toLocaleString("ja-JP")}</span>
+                                <span>{formatHistoryDate(item.usedAt)}</span>
                                 <small>{item.url}</small>
                               </button>
                             </li>
@@ -615,7 +548,7 @@ export default function Home() {
                         </ul>
                       </>
                     ) : (
-                      <p>取得に成功したヤマレコURLがここに残ります。</p>
+                      <p>取得に成功したYamareco URLがここに残ります。</p>
                     )}
                   </div>
                 ) : null}
@@ -625,7 +558,7 @@ export default function Home() {
 
               <button className="primary-button" disabled={status === "generating"} onClick={generatePlan} type="button">
                 {status === "generating" ? <LoaderCircle className="spin" size={23} /> : <Route size={23} />}
-                {status === "generating" ? "公開情報を取得中" : "公開情報を取得"}
+                {status === "generating" ? "AIが計画書を作成中" : "AIで計画書作成"}
               </button>
               {status === "generating" ? (
                 <div className="generation-progress" aria-live="polite" role="status">
@@ -652,20 +585,6 @@ export default function Home() {
         )}
 
       </div>
-      <footer className="app-footer">
-        <div>
-          <strong>🏔️ Research Desk</strong>
-          <p>ヤマレコやWeb検索で分かる山行情報を代わりに取得し、確認しやすい形に整理します。</p>
-        </div>
-        <div>
-          <strong>⚡ 高速処理</strong>
-          <p>公開ページの解析とWeb検索を組み合わせ、交通・宿泊・予算・連絡先などの調査を短時間でまとめます。</p>
-        </div>
-        <div>
-          <strong>🔒 プライベート</strong>
-          <p>公開されたヤマレコ情報のみを参照。個人情報や非公開計画には対応していません。</p>
-        </div>
-      </footer>
     </main>
   );
 }
@@ -724,6 +643,12 @@ function ReviewView({
   const displayedOrganizationRows = displayedOrganizations.map((item) => item.row);
   const planUrl = yamarecoPlanUrl(plan.sources);
   const timetableCitationLinks = buildTimetableCitations(plan.timetables);
+
+  function focusFirstMissingField() {
+    const firstMissing = document.querySelector<HTMLElement>('.extraction-editor [aria-invalid="true"]');
+    firstMissing?.scrollIntoView({ behavior: "smooth", block: "center" });
+    window.setTimeout(() => firstMissing?.focus(), 450);
+  }
 
   useEffect(() => () => {
     if (transportRecalculation.current) window.clearTimeout(transportRecalculation.current);
@@ -834,17 +759,17 @@ function ReviewView({
         <button className="text-button" onClick={onBack} type="button"><ArrowLeft size={18} />入力へ戻る</button>
         <div className="review-toolbar-title"><small>編集中の抽出情報</small><strong>{plan.title || "名称未設定の山行情報"}</strong>{generationDurationMs > 0 ? <span className="generation-result"><Clock3 size={13} />取得時間 {formatElapsed(generationDurationMs)}</span> : null}</div>
         <div className="review-toolbar-actions">
-          {planUrl ? <button className="outline-button" onClick={() => setYamarecoPaneOpen((open) => !open)} type="button">{yamarecoPaneOpen ? "ヤマレコを閉じる" : "ヤマレコを表示"}</button> : null}
+          {planUrl ? <button aria-label={yamarecoPaneOpen ? "元ページを閉じる" : "元ページを表示"} className="outline-button source-pane-toggle" onClick={() => setYamarecoPaneOpen((open) => !open)} title={yamarecoPaneOpen ? "元ページを閉じる" : "元ページを表示"} type="button"><MapPinned size={16} />元ページ</button> : null}
           <button className="outline-button" disabled={previewBusy} onClick={previewWord} type="button"><Eye size={17} />{previewBusy ? "作成中" : "Wordプレビュー"}</button>
           <button className="primary-small" disabled={wordBusy} onClick={downloadWord} type="button"><Download size={17} />{wordBusy ? "作成中" : "Word出力"}</button>
         </div>
       </div>
       {wordError ? <div className="word-error word-error-banner" role="alert">{wordError}</div> : null}
-      {notice ? <div className="notice">{notice}</div> : null}
+      {notice ? <div className={`notice ${notice.startsWith("デモモード") ? "demo-notice" : ""}`}>{notice}</div> : null}
       {planUrl && yamarecoPaneOpen ? (
-        <aside className="yamareco-reference-pane" aria-label="入力したヤマレコ">
+        <aside className="yamareco-reference-pane" aria-label="入力したYamareco">
           <div className="yamareco-reference-toolbar">
-            <strong>入力したヤマレコ</strong>
+            <strong>入力したYamareco</strong>
             <div>
               <a href={planUrl} rel="noreferrer" target="_blank">別タブで開く<ExternalLink size={12} /></a>
               <button onClick={() => setYamarecoPaneOpen(false)} type="button">折りたたむ</button>
@@ -858,7 +783,7 @@ function ReviewView({
             <iframe
               src={planUrl}
               style={{ width: YAMARECO_REFERENCE_WIDTH, height: yamarecoFrameSize.height }}
-              title="入力したヤマレコ"
+              title="入力したYamareco"
             />
           </div>
           <p>表示されない場合は、上の「別タブで開く」から確認してください。</p>
@@ -866,15 +791,16 @@ function ReviewView({
       ) : null}
       <article className="plan-editor extraction-editor">
         <div className="editor-heading">
-          <span>AI抽出結果の確認</span>
+          <span>山行情報の確認・編集</span>
         </div>
 
         <div className="completion-card">
           <div>
             <FileText size={24} />
-            <span><strong>抽出項目 {completion}%</strong><small>{missingFields.length ? `未入力：${missingFields.map(({ label }) => label).join("、")}` : "公開情報の抽出項目が揃っています。"}</small></span>
+            <span><strong>{completed}/{requiredFields.length}項目を入力済み</strong><small>{missingFields.length ? `未入力：${missingFields.map(({ label }) => label).join("、")}` : "必要な項目が揃っています。"}</small></span>
           </div>
           <progress max="100" value={completion}>{completion}%</progress>
+          {missingFields.length ? <button className="missing-field-button" onClick={focusFirstMissingField} type="button">最初の未入力項目へ</button> : null}
         </div>
 
         <nav className="section-nav" aria-label="編集セクション">
@@ -886,7 +812,7 @@ function ReviewView({
         </nav>
 
         <section className="editor-section" id="basic">
-          <div className="section-title"><span>01</span><div><h2>ヤマレコから抽出</h2><p>計画名、日程、山域、入下山地点など、ヤマレコ本文から拾った情報です。</p></div></div>
+          <div className="section-title"><span>01</span><div><h2>Yamarecoから抽出</h2><p>計画名、日程、山域、入下山地点など、Yamareco本文から拾った情報です。</p></div></div>
           <div className="editor-grid">
             <label>計画名<i className="source-badge yamareco">YAMARECO</i><input aria-invalid={!plan.title} value={plan.title} onChange={(event) => onUpdate("title", event.target.value)} /></label>
             <label>日程<i className="source-badge yamareco">YAMARECO</i><input aria-invalid={!plan.dates} value={plan.dates} onChange={(event) => onUpdate("dates", event.target.value)} /></label>
@@ -907,13 +833,13 @@ function ReviewView({
           <div className="section-title"><span>02</span><div><h2>日別行程</h2><p>水場は 💧、トイレは 🚻 を付けて抽出しています。起床・就寝はWord用の手動時刻として残します。</p></div></div>
           <label className="schedule-field">行動予定<i className="source-badge yamareco">YAMARECO</i><textarea aria-invalid={!plan.schedule.length} value={listValue(plan.schedule)} onChange={(event) => onUpdate("schedule", toScheduleList(event.target.value))} /></label>
           <div className="editor-grid">
-            <label>初日の日の入り<i className="source-badge hybrid">AI/Web</i><input value={plan.sunset} onChange={(event) => onUpdate("sunset", event.target.value)} /></label>
-            {scheduleDayCount > 1 ? <label>日の出<i className="source-badge hybrid">AI/Web</i><input value={plan.sunrise} onChange={(event) => onUpdate("sunrise", event.target.value)} /></label> : null}
+            <label>初日の日の入り<i className="source-badge yamareco">YAMARECO</i><input value={plan.sunset} onChange={(event) => onUpdate("sunset", event.target.value)} /></label>
+            {scheduleDayCount > 1 ? <label>日の出<i className="source-badge yamareco">YAMARECO</i><input value={plan.sunrise} onChange={(event) => onUpdate("sunrise", event.target.value)} /></label> : null}
           </div>
         </section>
 
         <section className="editor-section" id="web">
-          <div className="section-title"><span>03</span><div><h2>Web検索で補完</h2><p>交通、宿泊、時刻表など、ヤマレコだけでは足りない公開情報です。</p></div></div>
+          <div className="section-title"><span>03</span><div><h2>Web検索で補完</h2><p>交通、宿泊、時刻表など、Yamarecoだけでは足りない公開情報です。</p></div></div>
           <label>交通<i className="source-badge web">WEB</i><textarea aria-invalid={!plan.transport} value={plan.transport} onChange={(event) => updateTransport(event.target.value)} /></label>
           {budgetRecalculating ? <p className="inline-status"><LoaderCircle className="spin" size={14} />変更した交通経路から費用を再計算中</p> : null}
           <a className="reference-tool-link" href="https://www.navitime.co.jp/transfer/" rel="noreferrer" target="_blank">NAVITIMEで確認<ExternalLink size={12} /></a>
@@ -966,7 +892,7 @@ function ReviewView({
 
         <section className="editor-section" id="images">
           <div className="section-title"><span>05</span><div><h2>Wordへ貼る画像</h2><p>概念図とバス時刻表のスクリーンショットをここで差し替えできます。</p></div></div>
-          {plan.routeMapUrl ? <a className="route-map-link" href={plan.routeMapUrl} rel="noreferrer" target="_blank">ヤマレコでルートを開く<ExternalLink size={14} /></a> : null}
+          {plan.routeMapUrl ? <a className="route-map-link" href={plan.routeMapUrl} rel="noreferrer" target="_blank">Yamarecoでルートを開く<ExternalLink size={14} /></a> : null}
           <ScreenshotPicker files={routeMapImage ? [routeMapImage] : []} label="ルート全体の概念図画像" onFiles={(files) => onRouteMapImageChange(files[0] ?? null)} onRemove={() => onRouteMapImageChange(null)} />
           <ScreenshotPicker files={timetableImages} label="必要なバス時刻表画像" multiple onFiles={(files) => setTimetableImages((current) => [...current, ...files])} onRemove={(index) => setTimetableImages((current) => current.filter((_, itemIndex) => itemIndex !== index))} />
         </section>

@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "ヤマレコ公開情報リサーチ Field Desk",
-  description: "ヤマレコとWeb検索で分かる山行情報を代わりに取得・整理するリサーチアシスタント。",
+  title: "Yamareco Plan Builder",
+  description: "YamarecoとWeb検索で分かる山行情報を取得・整理する計画作成アシスタント。",
   other: {
     "codex-preview": "development",
   },

@@ -15,7 +15,7 @@ try {
 }
 
 try {
-  await readFile(hosting);
+  JSON.parse(await readFile(hosting, "utf8"));
 } catch {
   console.error("Missing packaged Sites manifest: dist/.openai/hosting.json");
   process.exit(66);

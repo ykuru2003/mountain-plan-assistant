@@ -6,6 +6,7 @@ test("uses the built-in Word format and exposes preview/export controls", async 
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   const styles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
   const exporter = await readFile(new URL("../lib/word-template.ts", import.meta.url), "utf8");
+  const history = await readFile(new URL("../lib/usage-history.ts", import.meta.url), "utf8");
   const template = await stat(new URL("../public/templates/mountain-plan-template.docx", import.meta.url));
 
   assert.ok(template.size > 0);
@@ -18,22 +19,22 @@ test("uses the built-in Word format and exposes preview/export controls", async 
   assert.match(page, /fetch\("\/templates\/mountain-plan-template\.docx"/);
   assert.match(page, /fillWordTemplate\(await templateResponse\.arrayBuffer\(\), plan,/);
   assert.match(page, /renderAsync\(wordDocument, container\.current/);
-  assert.match(page, /山行情報を<\/span><br \/>代わりに取得/);
-  assert.match(page, /YAMARECO RESEARCH/);
+  assert.match(page, /Yamareco Plan Builder/);
+  assert.match(page, /YAMARECO PLAN BUILDER/);
   assert.match(page, /公開情報を取得/);
-  assert.match(page, /USAGE_HISTORY_KEY/);
+  assert.match(history, /STORAGE_KEY/);
   assert.match(page, /usageHistory/);
-  assert.match(page, /使った履歴/);
+  assert.match(page, />\s*履歴\s*</);
   assert.doesNotMatch(page, />URLを確認<\/button>/);
   assert.match(page, /yamareco-reference-pane/);
   assert.match(page, /yamareco-reference-frame/);
   assert.match(page, /yamarecoFrameSize/);
   assert.match(page, /YAMARECO_REFERENCE_WIDTH/);
   assert.match(page, /src=\{planUrl\}/);
-  assert.match(page, /ヤマレコを閉じる/);
-  assert.match(page, /ヤマレコを表示/);
+  assert.match(page, /元ページを閉じる/);
+  assert.match(page, /元ページを表示/);
   assert.match(page, /extraction-editor/);
-  assert.match(page, /AI抽出結果の確認/);
+  assert.match(page, /山行情報の確認・編集/);
   assert.match(page, /source-badge yamareco/);
   assert.match(page, /source-badge web/);
   assert.match(page, /source-badge manual/);
@@ -92,7 +93,7 @@ test("uses the built-in Word format and exposes preview/export controls", async 
   assert.match(exporter, /plan\.sunrise/);
   assert.match(exporter, /ensureTableRows/);
   assert.doesNotMatch(exporter, /時刻表：/);
-  assert.doesNotMatch(exporter, /ヤマレコのルート地図を開く/);
+  assert.doesNotMatch(exporter, /Yamarecoのルート地図を開く/);
   assert.doesNotMatch(exporter, /plan\.lodging && `宿泊：/);
   assert.doesNotMatch(exporter, /appendParagraph\(document, notesCell, "参照："/);
   assert.match(exporter, /appendImagesAfterBodyParagraph/);

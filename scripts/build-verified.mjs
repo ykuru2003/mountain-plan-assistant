@@ -6,8 +6,7 @@ import { fileURLToPath } from "node:url";
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(scriptDir, "..");
 const env = { ...process.env, SITES_PROJECT_ROOT: projectRoot };
-const vinextBin = process.platform === "win32" ? "vinext.cmd" : "vinext";
-const vinextPath = path.join(projectRoot, "node_modules", ".bin", vinextBin);
+const vinextPath = path.join(projectRoot, "node_modules", "vinext", "dist", "cli.js");
 
 if (!existsSync(vinextPath)) {
   console.error("vinext is unavailable. Run npm install and wait for it to finish before building.");
@@ -15,11 +14,15 @@ if (!existsSync(vinextPath)) {
 }
 
 console.log("Running vinext build...");
-const buildResult = spawnSync(vinextPath, ["build"], {
+const buildResult = spawnSync(process.execPath, [vinextPath, "build"], {
   cwd: projectRoot,
   stdio: "inherit",
   env,
 });
+if (buildResult.error) {
+  console.error(`Failed to start vinext build: ${buildResult.error.message}`);
+  process.exit(1);
+}
 if (buildResult.status !== 0) {
   process.exit(buildResult.status ?? 1);
 }
